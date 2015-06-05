@@ -1,6 +1,12 @@
 # google-apps-clj
 
-A Clojure library that wraps the Google Java API for different Google Applications such as Google Drive, and Google Spreadsheets.
+A Clojure library that wraps the Google Java API for different Google Applications.
+
+## Currently supported APIs
+
+* Google OAuth 2.0
+* Google Drive
+* Google Spreadsheets.
 
 ## Usage
 

@@ -54,3 +54,18 @@
         (.setAccessToken (get auth-map "access_token"))
         (.setRefreshToken (get auth-map "refresh_token"))
         (.setTokenType (get auth-map "token_type")))))
+
+(defn build-credential
+  "Given a google-ctx configuration map, builds a GoogleCredential Object from 
+   the token response and google secret created from those respective methods.
+   Uses the default JSON factory and GoogleHttpTransport"
+  [google-ctx]
+  (let [token-response (get-token-response google-ctx)
+        google-secret (get-google-secret google-ctx)
+        credential (-> (GoogleCredential$Builder.)
+                       (.setTransport http-transport)
+                       (.setJsonFactory json-factory)
+                       (.setClientSecrets google-secret)
+                       .build)
+        _ (do (.setFromTokenResponse credential token-response))]
+    credential))

@@ -1,7 +1,8 @@
 (ns google-apps-clj.google-drive
   "A library for connecting to Google Drive through the Drive API"
   (:require [clojure.java.io :as io :only [file resource as-url]]
-            [google-apps-clj.credentials :as cred])
+            [google-apps-clj.credentials :as cred]
+            [clojure.core.typed :as t])
   (:import (com.google.api.services.drive Drive$Builder
                                           DriveScopes)
            (com.google.api.services.drive.model File

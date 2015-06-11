@@ -40,11 +40,9 @@
   (let [details (doto (GoogleClientSecrets$Details.)
                   (.setClientId (:client-id google-ctx))
                   (.setClientSecret (:client-secret google-ctx))
-                  (.setRedirectUris (:redirect-uris google-ctx))
-                  assert)
+                  (.setRedirectUris (:redirect-uris google-ctx)))
         google-secret (doto (GoogleClientSecrets.)
-                        (.setInstalled details)
-                        assert)]
+                        (.setInstalled details))]
     google-secret))
 
 (t/ann get-auth-map [GoogleCtx (java.util.Collection String) -> TokenResponse])

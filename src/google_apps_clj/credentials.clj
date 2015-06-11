@@ -1,20 +1,19 @@
 (ns google-apps-clj.credentials
   "A library used to set up Google OAuth 2 credentials"
-  (:require [clojure.edn :as edn :only [read-string]]
-            [clojure.core.typed :as t])
-  (:import (com.google.api.client.googleapis.auth.oauth2 GoogleAuthorizationCodeFlow$Builder
+  (:require [clojure.core.typed :as t]
+            [clojure.edn :as edn :only [read-string]])
+  (:import (com.google.api.client.auth.oauth2 Credential
+                                              TokenResponse)
+           (com.google.api.client.googleapis.auth.oauth2 GoogleAuthorizationCodeFlow$Builder
                                                          GoogleClientSecrets
                                                          GoogleClientSecrets$Details
                                                          GoogleCredential
                                                          GoogleCredential$Builder
                                                          GoogleTokenResponse)
-           (com.google.api.client.auth.oauth2 Credential
-                                              TokenResponse)
-           (com.google.api.client.http HttpTransport)
            (com.google.api.client.googleapis.javanet GoogleNetHttpTransport)
-           (com.google.api.client.http.javanet NetHttpTransport)
-           (com.google.api.client.json.jackson2 JacksonFactory)
-           (com.google.api.client.json JsonFactory)))
+           (com.google.api.client.http HttpTransport)
+           (com.google.api.client.json JsonFactory)
+           (com.google.api.client.json.jackson2 JacksonFactory)))
 
 (t/defalias GoogleCtx '{:client-id String
                         :client-secret String
@@ -23,6 +22,7 @@
                                     :expires-in Number
                                     :refresh-token String
                                     :token-type String}})
+
 (t/non-nil-return com.google.api.client.json.jackson2.JacksonFactory/getDefaultInstance :all)
 (t/non-nil-return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport/newTrustedTransport :all)
 

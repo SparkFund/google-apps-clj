@@ -1,24 +1,31 @@
 (ns google-apps-clj.google-drive
   "A library for connecting to Google Drive through the Drive API"
-  (:require [clojure.java.io :as io :only [file resource as-url]]
+  (:require [clojure.edn :as edn :only [read-string]]
+            [clojure.java.io :as io :only [file resource as-url]]
             [google-apps-clj.credentials :as cred]
             [clojure.core.typed :as t])
-  (:import (com.google.api.services.drive Drive$Builder
+  (:import (com.google.api.client.http FileContent
+                                       GenericUrl)
+           (com.google.api.services.drive Drive
+                                          Drive$Builder
                                           DriveScopes)
            (com.google.api.services.drive.model File
-                                                ParentReference)
-           (com.google.api.client.http FileContent
-                                       GenericUrl)))
+                                                ParentReference)))
 
+(t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
+
+(t/ann build-drive-service [cred/GoogleCtx -> Drive])
 (defn build-drive-service
   "Given a google-ctx configuration map, builds a Drive service using 
    credentials coming from the OAuth2.0 credential setup inside google-ctx"
   [google-ctx]
-  (->> google-ctx
-       cred/build-credential
-       (Drive$Builder. cred/http-transport cred/json-factory)
-       .build))
+  (let [drive-builder (->> google-ctx
+                           cred/build-credential
+                           (Drive$Builder. cred/http-transport cred/json-factory))]
+    (cast Drive (doto (.build drive-builder)
+                  assert))))
 
+(t/ann upload-file! [cred/GoogleCtx java.io.File String String String String -> File])
 (defn upload-file!
   "Given a google-ctx configuration map, a file to upload, an ID of 
    the parent folder you wish to insert the file in, the title of the 
@@ -28,41 +35,47 @@
    is whomever owns the Credentials used to make the Drive Service"
   [google-ctx file parent-folder-id file-title file-description media-type]
   (let [drive-service (build-drive-service google-ctx)
-        parent-folder (-> (ParentReference.)
-                          (.setId parent-folder-id)
-                          vector)
-        drive-file (-> (File.)
-                       (.setTitle file-title)
-                       (.setDescription file-description)
-                       (.setMimeType media-type)
-                       (.setParents parent-folder))
+        parent-folder (doto (ParentReference.)
+                        (.setId parent-folder-id))
+        drive-file (doto (File.)
+                     (.setTitle file-title)
+                     (.setDescription file-description)
+                     (.setMimeType media-type)
+                     (.setParents (vector parent-folder)))
         media-content (FileContent. media-type file)
-        drive-file-metadata (-> (.files drive-service)
-                                (.insert drive-file media-content)
-                                (.setConvert true)
-                                .execute)]
-    drive-file-metadata))
+        drive-files (doto (.files ^Drive drive-service)
+                     assert)
+        drive-file (doto (.insert drive-files drive-file media-content)
+                     assert
+                     (.setConvert true))]
+    (cast File (doto (.execute drive-file)
+                 assert))))
 
+(t/ann download-file! [cred/GoogleCtx String String -> String])
 (defn download-file!
-  "Given a google-ctx configuration map, a file name to download, 
-   and the MIME type you wish to export it as, download the drive file
+  "Given a google-ctx configuration map, a file id to download, 
+   and optionally a media type(defaults to csv), download the drive file
    and then read it in and return the result of reading the file or
-   an error message if the file is not found or if there are too many"
-  [google-ctx file-name media-type]
+   an error message if it is not found or if there are too many"
+  [google-ctx file-id media-type]
   (let [drive-service (build-drive-service google-ctx)
-        files (-> (.files drive-service)
-                  .list
-                  (.setQ (str "title = '" file-name "'"))
-                  .execute
-                  .getItems)
-        file (cond (= (count files) 1) {:file (first files)}
-                   (< (count files) 1) {:error :no-file}
-                   (> (count files) 1) {:error :more-than-one-file})] 
-    (if (contains? file :error)
-      file
-      (-> drive-service
-          .getRequestFactory
-          (.buildGetRequest (-> file :file .getExportLinks (get media-type) GenericUrl.))
-          .execute
-          .getContent
-          slurp))))
+        files (doto (.files ^Drive drive-service)
+                assert)
+        files-get (doto (.get files file-id)
+                    assert)
+        file (cast File (doto (.execute files-get)
+                          assert))
+        http-request (doto (.getRequestFactory ^Drive drive-service)
+                       assert)
+        export-link (doto (.getExportLinks ^File file)
+                      assert)
+        generic-url (GenericUrl. ^String (doto (cast String (get export-link media-type))
+                                                         assert))
+        get-request (doto (.buildGetRequest http-request generic-url)
+                      assert)
+        response (doto (.execute get-request)
+                   assert)
+        input-stream (doto (.getContent response)
+                       assert)]
+    (slurp input-stream)))
+

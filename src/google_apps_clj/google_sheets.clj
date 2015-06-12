@@ -313,85 +313,94 @@
 ;;;;;;;;;;;;;;;;;;;;;;; Read and Write entire Worksheets ;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; (defn read-worksheet-headers
-;;   "Given a Spreadsheet Service and a WorksheetEntry, return
-;;    the value of all header cells(the first row in a worksheet)"
-;;   [sheet-service worksheet-entry]
-;;   (let [max-col (.getColCount worksheet-entry)
-;;         cell-feed-url (.getCellFeedUrl worksheet-entry)
-;;         cell-query (doto (CellQuery. cell-feed-url)
-;;                      (.setReturnEmpty true)
-;;                      (.setMinimumRow (int 1))
-;;                      (.setMaximumRow (int 1))
-;;                      (.setMinimumCol (int 1))
-;;                      (.setMaximumCol max-col))
-;;         cells (-> (.query sheet-service cell-query CellFeed)
-;;                   .getEntries)
-;;         get-value (fn [cell]
-;;                     (let [value (.getValue (.getCell cell))]
-;;                       (if (string? value) value "")))]
-;;     (into [] (map get-value cells))))
+(t/ann ^:no-check read-worksheet-headers [SpreadsheetService WorksheetEntry -> (t/Vec String)])
+(defn read-worksheet-headers
+  "Given a Spreadsheet Service and a WorksheetEntry, return
+   the value of all header cells(the first row in a worksheet)"
+  [sheet-service worksheet-entry]
+  (let [max-col (.getColCount worksheet-entry)
+        cell-feed-url (.getCellFeedUrl worksheet-entry)
+        cell-query (doto (CellQuery. cell-feed-url)
+                     (.setReturnEmpty true)
+                     (.setMinimumRow (int 1))
+                     (.setMaximumRow (int 1))
+                     (.setMinimumCol (int 1))
+                     (.setMaximumCol max-col))
+        cells (-> (.query sheet-service cell-query CellFeed)
+                  .getEntries)
+        get-value (fn [cell]
+                    (let [value (.getValue (.getCell cell))]
+                      (if (string? value) value "")))]
+    (into [] (map get-value cells))))
 
-;; (defn read-worksheet-values
-;;   "Given a SpreadsheetService, and a WorksheetEntry, reads in that worksheet and returns
-;;    the data from the cells as a list of vectors of strings '(['example']). Will return
-;;    {:error :msg} if something goes wrong along the way such as a missing worksheet "
-;;   [sheet-service worksheet-entry]
-;;   (let [list-feed (.getFeed sheet-service (.getListFeedUrl worksheet-entry) ListFeed)
-;;         entries (.getEntries list-feed)
-;;         get-value (fn [row tag]
-;;                     (let [value (.getValue row tag)]
-;;                       (if (string? value) value "")))
-;;         print-value (fn [entry]
-;;                       (let [row (.getCustomElements entry)]
-;;                         (into [] (map #(get-value row %) (.getTags row)))))]
-;;     (map print-value entries)))
+(t/ann ^:no-check read-worksheet-values [SpreadsheetService WorksheetEntry -> (t/Seq (t/Vec String))])
+(defn read-worksheet-values
+  "Given a SpreadsheetService, and a WorksheetEntry, reads in that worksheet and returns
+   the data from the cells as a list of vectors of strings '(['example']). Will return
+   {:error :msg} if something goes wrong along the way such as a missing worksheet "
+  [sheet-service worksheet-entry]
+  (let [list-feed (.getFeed sheet-service (.getListFeedUrl worksheet-entry) ListFeed)
+        entries (.getEntries list-feed)
+        get-value (fn [row tag]
+                    (let [value (.getValue row tag)]
+                      (if (string? value) value "")))
+        print-value (fn [entry]
+                      (let [row (.getCustomElements entry)]
+                        (into [] (map #(get-value row %) (.getTags row)))))]
+    (map print-value entries)))
 
-;; (defn read-worksheet
-;;   "Given a google-ctx configuration map, the id of a spreadsheet, the id of
-;;    a worksheet, reads in the worksheet as a list of vectors of strings, and
-;;    seperates the headers and values of the sheet (first row and all other rows)"
-;;   [google-ctx spreadsheet-id worksheet-id]
-;;   (let [sheet-service (build-sheet-service google-ctx)
-;;         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
-;;         worksheet (if (contains? spreadsheet :error)
-;;                     spreadsheet
-;;                     (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))]
-;;     (if (contains? worksheet :error)
-;;       worksheet
-;;       (let [headers (read-worksheet-headers sheet-service (:worksheet worksheet))
-;;             values (read-worksheet-values sheet-service (:worksheet worksheet))]
-;;         {:headers headers :values values}))))
+(t/ann ^:no-check read-worksheet [cred/GoogleCtx String String -> (t/U '{:headers (t/Vec String)
+                                                                         :values (t/Seq (t/Vec String))}
+                                                                       '{:error t/Keyword})])
+(defn read-worksheet
+  "Given a google-ctx configuration map, the id of a spreadsheet, the id of
+   a worksheet, reads in the worksheet as a list of vectors of strings, and
+   seperates the headers and values of the sheet (first row and all other rows)"
+  [google-ctx spreadsheet-id worksheet-id]
+  (let [sheet-service (build-sheet-service google-ctx)
+        spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        worksheet (if (contains? spreadsheet :error)
+                    spreadsheet
+                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))]
+    (if (contains? worksheet :error)
+      worksheet
+      (let [headers (read-worksheet-headers sheet-service (:worksheet worksheet))
+            values (read-worksheet-values sheet-service (:worksheet worksheet))]
+        {:headers headers :values values}))))
 
-;; (defn write-worksheet
-;;   "Given a google-ctx configuration map, the id of a spreadsheet, the id of a worksheet,
-;;    and a map of the data {:headers data :values data}, resizes the sheet, which erases all
-;;    of the previous data, creates cells for the new data-map and calls batch-update cells 
-;;    on the data in chunks of a certain size that the API can handle"
-;;   [google-ctx spreadsheet-id worksheet-id data-map]
-;;   (let [sheet-service (build-sheet-service google-ctx)
-;;         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
-;;         worksheet (if (contains? spreadsheet :error)
-;;                     spreadsheet
-;;                     (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))]
-;;     (if (contains? worksheet :error)
-;;       worksheet
-;;       (let [headers (:headers data-map)
-;;             values (:values data-map)
-;;             rows-needed (inc (count values))
-;;             cols-needed (apply max (cons (count headers) (map count values)))
-;;             worksheet-name (.getPlainText (.getTitle (:worksheet worksheet)))
-;;             worksheet (update-worksheet-all-fields (:worksheet worksheet) 1 1 worksheet-name)
-;;             _ (update-cell! google-ctx spreadsheet-id worksheet-id [1 1 ""])
-;;             worksheet (update-worksheet-all-fields worksheet rows-needed cols-needed worksheet-name)
-;;             build-cell (fn [column value]
-;;                          [(inc column) value])
-;;             build-row (fn [row-number row]
-;;                         (map #(into [] (cons row-number %)) (map-indexed build-cell row)))
-;;             header-cells (map #(vector (inc (first %)) (second %) (nth % 2))
-;;                               (apply concat (map-indexed build-row (list headers))))
-;;             value-cells (map #(vector (+ 2 (first %)) (second %) (nth % 2))
-;;                              (apply concat (map-indexed build-row values)))
-;;             all-cells (partition-all 10000 value-cells)
-;;             all-cells (cons (concat header-cells (first all-cells)) (rest all-cells))]
-;;         (dorun (map #(batch-update-cells! google-ctx spreadsheet-id worksheet-id %) all-cells))))))
+(t/ann ^:no-check write-worksheet
+       [cred/GoogleCtx String String '{:headers (t/Vec String)
+                                      :values (t/Seq (t/Vec String))} -> (t/U '{:error t/Keyword}
+                                                                              (t/Seq CellEntry))])
+(defn write-worksheet
+  "Given a google-ctx configuration map, the id of a spreadsheet, the id of a worksheet,
+   and a map of the data {:headers data :values data}, resizes the sheet, which erases all
+   of the previous data, creates cells for the new data-map and calls batch-update cells 
+   on the data in chunks of a certain size that the API can handle"
+  [google-ctx spreadsheet-id worksheet-id data-map]
+  (let [sheet-service (build-sheet-service google-ctx)
+        spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        worksheet (if (contains? spreadsheet :error)
+                    spreadsheet
+                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))]
+    (if (contains? worksheet :error)
+      worksheet
+      (let [headers (:headers data-map)
+            values (:values data-map)
+            rows-needed (inc (count values))
+            cols-needed (apply max (cons (count headers) (map count values)))
+            worksheet-name (.getPlainText (.getTitle (:worksheet worksheet)))
+            worksheet (update-worksheet-all-fields (:worksheet worksheet) 1 1 worksheet-name)
+            _ (update-cell! google-ctx spreadsheet-id worksheet-id [1 1 ""])
+            worksheet (update-worksheet-all-fields worksheet rows-needed cols-needed worksheet-name)
+            build-cell (fn [column value]
+                         [(inc column) value])
+            build-row (fn [row-number row]
+                        (map #(into [] (cons row-number %)) (map-indexed build-cell row)))
+            header-cells (map #(vector (inc (first %)) (second %) (nth % 2))
+                              (apply concat (map-indexed build-row (list headers))))
+            value-cells (map #(vector (+ 2 (first %)) (second %) (nth % 2))
+                             (apply concat (map-indexed build-row values)))
+            all-cells (partition-all 10000 value-cells)
+            all-cells (cons (concat header-cells (first all-cells)) (rest all-cells))]
+        (dorun (map #(batch-update-cells! google-ctx spreadsheet-id worksheet-id %) all-cells))))))

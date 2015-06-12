@@ -1,5 +1,6 @@
 (ns google-apps-clj.google-sheets
   (:require [clojure.core.typed :as t]
+            [clojure.core.typed.unsafe :as tc]
             [clojure.edn :as edn :only [read-string]]
             [clojure.java.io :as io :only [as-url file resource]]
             [google-apps-clj.credentials :as cred])
@@ -35,6 +36,68 @@
         service (doto (SpreadsheetService. "Default Spreadsheet Service")
                   (.setOAuth2Credentials google-credential))]
     service))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;; Spreadsheet Entry Functions ;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(t/ann find-spreadsheet-by-id
+       [SpreadsheetService String -> (t/U '{:spreadsheet SpreadsheetEntry}
+                                          '{:error (t/Val :no-entry)})])
+(defn find-spreadsheet-by-id
+  "Given a SpreadsheetService and the id of a spreadsheet, find the SpreadsheetEntry
+   with the given title in a map, or an error message in a map"
+  [sheet-service id]
+  (let [sheet-url (io/as-url (str spreadsheet-url "/" id))
+        entry (tc/ignore-with-unchecked-cast
+               (.getEntry sheet-service sheet-url SpreadsheetEntry nil)
+               SpreadsheetEntry)]
+    (if entry
+      {:spreadsheet entry}
+      {:error :no-entry})))
+
+
+(t/ann find-spreadsheet-by-title
+       [SpreadsheetService String -> (t/U '{:spreadsheet SpreadsheetEntry}
+                                          '{:error t/Keyword})])
+(defn find-spreadsheet-by-title
+  "Given a SpreadsheetService and a title of a spreadsheet, find the SpreadsheetEntry
+   with the given title in a map, or an error message in a map"
+  [sheet-service title]
+  (let [query (doto (SpreadsheetQuery. spreadsheet-url)
+                (.setTitleQuery title)
+                (.setTitleExact true))
+        query-results (doto (.query ^SpreadsheetService sheet-service query SpreadsheetFeed)
+                        assert)
+        entries (doto (.getEntries query-results)
+                  assert)]
+    (cond (= 1 (count entries)) {:spreadsheet (doto (cast SpreadsheetEntry (first entries))
+                                                assert)}
+          (< (count entries) 1) {:error :no-spreadsheet}
+          :else {:error :more-than-one-spreadsheet})))
+
+(t/ann ^:no-check file-name->ids [cred/GoogleCtx String -> (t/U '{:spreadsheet t/Map
+                                                                  :worksheet t/Map}
+                                                                '{:error t/Keyword})])
+(defn file-name->ids
+  "Given a google-ctx, and a spreadsheet name, gets the spreadsheet id and all of the 
+   worksheet ids for this file and outputs them as a map"
+  [google-ctx spreadsheet-name]
+  (let [sheet-service (build-sheet-service google-ctx)
+        spreadsheet (find-spreadsheet-by-title sheet-service spreadsheet-name)]
+    (if (contains? spreadsheet :error)
+      spreadsheet
+      (let [spreadsheet-id (.getId (:spreadsheet spreadsheet))
+            spreadsheet-id (subs spreadsheet-id (inc (.lastIndexOf spreadsheet-id "/")))
+            worksheets (seq (.getWorksheets (:spreadsheet spreadsheet)))
+            get-id (fn [worksheet-entry]
+                     (let [worksheet-id (.getId worksheet-entry)]
+                       [(subs worksheet-id (inc (.lastIndexOf worksheet-id "/")))
+                        (.getPlainText (.getTitle worksheet-entry))]))
+            all-worksheets (map get-id worksheets)
+            worksheet-map (into {} all-worksheets)]
+        {:spreadsheet {spreadsheet-id spreadsheet-name}
+         :worksheets worksheet-map}))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;   Worksheet Entry Functions  ;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -87,7 +150,7 @@
     (cast WorksheetEntry (doto (.update worksheet)
                            assert))))
 
-(t/ann ^:no-check find-worksheet-by-id
+(t/ann find-worksheet-by-id
        [SpreadsheetService SpreadsheetEntry String -> (t/U '{:worksheet WorksheetEntry}
                                                            '{:error (t/Val :no-entry)})])
 (defn find-worksheet-by-id
@@ -95,83 +158,36 @@
    the WorksheetEntry with the given id in a map, or an error message in a map"
   [sheet-service spreadsheet id]
   (let [url (io/as-url (str (.getWorksheetFeedUrl ^SpreadsheetEntry spreadsheet) "/" id))
-        entry (.getEntry sheet-service url WorksheetEntry nil)]
+        entry (tc/ignore-with-unchecked-cast
+               (.getEntry sheet-service url WorksheetEntry nil)
+               WorksheetEntry)]
     (if entry
       {:worksheet entry}
       {:error :no-entry})))
 
-(t/ann ^:no-check find-worksheet-by-title
+(t/ann find-worksheet-by-title
        [SpreadsheetService SpreadsheetEntry String -> (t/U '{:worksheet WorksheetEntry}
                                                            '{:error t/Keyword})])
 (defn find-worksheet-by-title
   "Given a SpreadsheetService, SpreadSheetEntry and a title of a worksheet, find the WorksheetEntry 
    with the given title in a map, or an error message in a map"
   [sheet-service spreadsheet title]
-  (let [query (doto (WorksheetQuery. (.getWorksheetFeedUrl ^SpreadsheetEntry spreadsheet))
+  (let [query (doto (WorksheetQuery. (doto (.getWorksheetFeedUrl ^SpreadsheetEntry spreadsheet)
+                                       assert))
                 (.setTitleQuery title)
                 (.setTitleExact true))
-        unverified (-> sheet-service (.query query WorksheetFeed) .getEntries)]
-    (cond (= 1 (count unverified)) {:worksheet (first unverified)}
-          (< (count unverified) 1) {:error :no-worksheet}
-          (> (count unverified) 1) {:error :more-than-one-worksheet})))
+        query-results (doto (.query ^SpreadsheetService sheet-service query WorksheetFeed)
+                        assert)
+        entries (doto (.getEntries query-results)
+                  assert)]
+    (cond (= 1 (count entries)) {:worksheet (doto (cast WorksheetEntry (first entries))
+                                              assert)}
+          (< (count entries) 1) {:error :no-worksheet}
+          :else {:error :more-than-one-worksheet})))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;; Spreadsheet Entry Functions ;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;; Editing Data Functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-;; (defn find-spreadsheet-by-id
-;;   "Given a SpreadsheetService and the id of a spreadsheet, find the SpreadsheetEntry
-;;    with the given title in a map, or an error message in a map"
-;;   [sheet-service id]
-;;   (let [sheet-url (io/as-url (str spreadsheet-url "/" id))
-;;         entry (.getEntry sheet-service sheet-url SpreadsheetEntry nil)]
-;;     (if entry
-;;       {:spreadsheet entry}
-;;       {:error :no-entry})))
-
-;; (defn find-spreadsheet-by-title
-;;   "Given a SpreadsheetService and a title of a spreadsheet, find the SpreadsheetEntry
-;;    with the given title in a map, or an error message in a map"
-;;   [sheet-service title]
-;;   (let [query (doto (SpreadsheetQuery. spreadsheet-url)
-;;                 (.setTitleQuery title)
-;;                 (.setTitleExact true))
-;;         entries (-> sheet-service (.query query SpreadsheetFeed) .getEntries)]
-;;     (cond (= 1 (count entries)) {:spreadsheet (first entries)}
-;;           (< (count entries) 1) {:error :no-spreadsheet}
-;;           (> (count entries) 1) {:error :more-than-one-spreadsheet})))
-
-;; (defn convert-gid-to-id
-;;   "This is really hacky and probably will break. Seriously, use this with caution,
-;;    I have no idea if this will continue to work if Google changes the way they 
-;;    create the id from the g-id. If something breaks, check this first"
-;;   [g-id]
-;;   (let [g-id (Integer. g-id)
-;;         new-style? (> g-id 31578)
-;;         xor-value (if new-style? 474 31578)
-;;         id (if new-style? (str "o" (Integer/toString (bit-xor g-id xor-value) 36))
-;;                (str (Integer/toString (bit-xor g-id xor-value) 36)))]
-;;     id))
-
-;; (defn file-name->ids
-;;   "Given a google-ctx, and spreadsheet name, gets the spreadsheet id and all of the 
-;;    worksheet ids for this file and outputs them as a map"
-;;   [google-ctx spreadsheet-name]
-;;   (let [sheet-service (build-sheet-service google-ctx)
-;;         spreadsheet (find-spreadsheet-by-title sheet-service spreadsheet-name)]
-;;     (if (contains? spreadsheet :error)
-;;       spreadsheet
-;;       (let [spreadsheet-id (.getId (:spreadsheet spreadsheet))
-;;             spreadsheet-id (subs spreadsheet-id (inc (.lastIndexOf spreadsheet-id "/")))
-;;             worksheets (seq (.getWorksheets (:spreadsheet spreadsheet)))
-;;             get-id (fn [worksheet-entry]
-;;                      (let [worksheet-id (.getId worksheet-entry)]
-;;                        [(subs worksheet-id (inc (.lastIndexOf worksheet-id "/")))
-;;                         (.getPlainText (.getTitle worksheet-entry))]))
-;;             all-worksheets (map get-id worksheets)
-;;             worksheet-map (into {} all-worksheets)]
-;;         {:spreadsheet {spreadsheet-id spreadsheet-name}
-;;          :worksheets worksheet-map}))))
 
 ;; (defn find-cell-by-row-col
 ;;   "Given a SpreadsheetService, a WorksheetEntry, a row and a column,

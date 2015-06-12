@@ -46,7 +46,7 @@
                                           '{:error (t/Val :no-entry)})])
 (defn find-spreadsheet-by-id
   "Given a SpreadsheetService and the id of a spreadsheet, find the SpreadsheetEntry
-   with the given title in a map, or an error message in a map"
+   with the given id in a map, or an error message in a map"
   [sheet-service id]
   (let [sheet-url (io/as-url (str spreadsheet-url "/" id))
         entry (tc/ignore-with-unchecked-cast
@@ -189,110 +189,129 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;; Editing Data Functions ;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-;; (defn find-cell-by-row-col
-;;   "Given a SpreadsheetService, a WorksheetEntry, a row and a column,
-;;    return the CellEntry at that location in a map, or an error message in a map"
-;;   [sheet-service worksheet row col]
-;;   (let [row (int row)
-;;         col (int col)
-;;         cell-feed-url (.getCellFeedUrl worksheet)
-;;         cell-query (doto (CellQuery. cell-feed-url)
-;;                      (.setReturnEmpty true)
-;;                      (.setMinimumRow row)
-;;                      (.setMaximumRow row)
-;;                      (.setMinimumCol col)
-;;                      (.setMaximumCol col))
-;;         cells (-> (.query sheet-service cell-query CellFeed)
-;;                   .getEntries)]
-;;     (cond (= 1 (count cells)) {:cell (first cells)}
-;;           (< (count cells) 1) {:error :no-cells}
-;;           (> (count cells) 1) {:error :more-than-one-cell})))
+(t/ann find-cell-by-row-col [SpreadsheetService WorksheetEntry Number Number -> (t/U '{:cell CellEntry}
+                                                                                     '{:error t/Keyword})])
+(defn find-cell-by-row-col
+  "Given a SpreadsheetService, a WorksheetEntry, a row and a column,
+   return the CellEntry at that location in a map, or an error message in a map"
+  [sheet-service worksheet row col]
+  (let [row (int row)
+        col (int col)
+        cell-feed-url (doto (.getCellFeedUrl ^WorksheetEntry worksheet)
+                        assert)
+        cell-query (doto (CellQuery. cell-feed-url)
+                     (.setReturnEmpty true)
+                     (.setMinimumRow row)
+                     (.setMaximumRow row)
+                     (.setMinimumCol col)
+                     (.setMaximumCol col))
+        query-results (doto (.query ^SpreadsheetService sheet-service cell-query CellFeed)
+                        assert)
+        cells (doto (.getEntries query-results)
+                assert)]
+    (cond (= 1 (count cells)) {:cell (doto (cast CellEntry (first cells))
+                                       assert)}
+          (< (count cells) 1) {:error :no-cells}
+          :else {:error :more-than-one-cell})))
 
-;; (defn update-cell!
-;;   "Given a google-ctx configuration map, the id of a spreadsheet,
-;;    id of a worksheet in that spreadsheet, and a cell(in form [row col value],
-;;    changes the value in the cell location inside of the given
-;;    worksheet inside of the spreadsheet, or returns an error map"
-;;   [google-ctx spreadsheet-id worksheet-id [row col value]]
-;;   (let [sheet-service (build-sheet-service google-ctx)
-;;         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
-;;         worksheet (if (contains? spreadsheet :error)
-;;                     spreadsheet
-;;                     (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
-;;         cell-feed-url (if (contains? worksheet :error)
-;;                         worksheet
-;;                         {:cell-feed-url (.getCellFeedUrl (:worksheet worksheet))})]
-;;     (if (contains? cell-feed-url :error)
-;;       cell-feed-url
-;;       (let [cell-feed-url (:cell-feed-url cell-feed-url)
-;;             cell-id (str "R" row "C" col)
-;;             cell-url (io/as-url (str cell-feed-url "/" cell-id))
-;;             cell (doto (CellEntry. row col value)
-;;                    (.setId (str cell-url)))
-;;             _ (.setHeader sheet-service "If-Match" "*") ]
-;;         (.update sheet-service cell-url cell)))))
+(t/ann ^:no-check update-cell!
+       [cred/GoogleCtx String String '[Number Number String] -> (t/U CellEntry
+                                                                     '{:error t/Keyword})])
+(defn update-cell!
+  "Given a google-ctx configuration map, the id of a spreadsheet,
+   id of a worksheet in that spreadsheet, and a cell(in form [row col value],
+   changes the value in the cell location inside of the given
+   worksheet inside of the spreadsheet, or returns an error map"
+  [google-ctx spreadsheet-id worksheet-id [row col value]]
+  (let [sheet-service (build-sheet-service google-ctx)
+        spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        worksheet (if (contains? spreadsheet :error)
+                    spreadsheet
+                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
+        cell-feed-url (if (contains? worksheet :error)
+                        worksheet
+                        {:cell-feed-url (.getCellFeedUrl (:worksheet worksheet))})]
+    (if (contains? cell-feed-url :error)
+      cell-feed-url
+      (let [cell-feed-url (:cell-feed-url cell-feed-url)
+            cell-id (str "R" row "C" col)
+            cell-url (io/as-url (str cell-feed-url "/" cell-id))
+            cell (doto (CellEntry. row col value)
+                   (.setId (str cell-url)))
+            _ (.setHeader sheet-service "If-Match" "*") ]
+        (.update sheet-service cell-url cell)))))
 
-;; (defn insert-row!
-;;   "Given a google-ctx configuration map, the name of a spreadsheet, 
-;;    name of a worksheet in that spreadsheet, and a map of header-value pairs
-;;    ({header value}) where header and value are both strings.
-;;    NOTE: The headers must be all lowercase with no capital letters even if the header
-;;    in the sheet has either one of those properties
-;;    NOTE: headers are the values in the first row of a Google Spreadsheet"
-;;   [google-ctx spreadsheet-id worksheet-id row-values]
-;;   (let [sheet-service (build-sheet-service google-ctx)
-;;         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
-;;         worksheet (if (contains? spreadsheet :error)
-;;                     spreadsheet
-;;                     (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
-;;         list-feed-url (if (contains? worksheet :error)
-;;                         worksheet
-;;                         {:list-feed-url (.getListFeedUrl (:worksheet worksheet))})
-;;         list-feed (if (contains? list-feed-url :error)
-;;                     list-feed-url
-;;                     {:list-feed (.getFeed sheet-service (:list-feed-url list-feed-url) ListFeed)})
-;;         row (ListEntry.)
-;;         headers (keys row-values)
-;;         update-value-by-header (fn [header]
-;;                                    (.setValueLocal (.getCustomElements row)
-;;                                                    header (get row-values header)))]
-;;     (if (contains? list-feed :error)
-;;       list-feed
-;;       (do (dorun (map update-value-by-header headers))
-;;           (.insert sheet-service (:list-feed-url list-feed-url) row)))))
+(t/ann ^:no-check insert-row!
+       [cred/GoogleCtx String String (t/Seq (t/Map String String)) -> (t/U ListEntry
+                                                                           '{:error t/Keyword})])
+(defn insert-row!
+  "Given a google-ctx configuration map, the name of a spreadsheet, 
+   name of a worksheet in that spreadsheet, and a map of header-value pairs
+   ({header value}) where header and value are both strings.
+   NOTE: The headers must be all lowercase with no capital letters even if the header
+   in the sheet has either one of those properties
+   NOTE: headers are the values in the first row of a Google Spreadsheet"
+  [google-ctx spreadsheet-id worksheet-id row-values]
+  (let [sheet-service (build-sheet-service google-ctx)
+        spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        worksheet (if (contains? spreadsheet :error)
+                    spreadsheet
+                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
+        list-feed-url (if (contains? worksheet :error)
+                        worksheet
+                        {:list-feed-url (.getListFeedUrl (:worksheet worksheet))})
+        list-feed (if (contains? list-feed-url :error)
+                    list-feed-url
+                    {:list-feed (.getFeed sheet-service (:list-feed-url list-feed-url) ListFeed)})
+        row (ListEntry.)
+        headers (keys row-values)
+        update-value-by-header (fn [header]
+                                   (.setValueLocal (.getCustomElements row)
+                                                   header (get row-values header)))]
+    (if (contains? list-feed :error)
+      list-feed
+      (do (dorun (map update-value-by-header headers))
+          (.insert sheet-service (:list-feed-url list-feed-url) row)))))
 
-;; (defn batch-update-cells!
-;;   "Given a google-ctx configuration map, the id of a spreadsheet, the id of
-;;    a worksheet, and a list of cells(in the form [row column value]), sends a batch
-;;    request of all cell updates to the drive api. Will return {:error :msg} if 
-;;    something goes wrong along the way"
-;;   [google-ctx spreadsheet-id worksheet-id cells]
-;;   (let [sheet-service (build-sheet-service google-ctx)
-;;         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
-;;         worksheet (if (contains? spreadsheet :error)
-;;                     spreadsheet
-;;                     (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
-;;         cell-feed-url (if (contains? worksheet :error)
-;;                         worksheet
-;;                         {:cell-feed-url (.getCellFeedUrl (:worksheet worksheet))})]
-;;     (if (contains? cell-feed-url :error)
-;;       cell-feed-url
-;;       (let [cell-feed-url (:cell-feed-url cell-feed-url)
-;;             batch-request (CellFeed.)
-;;             create-update-entry (fn [[row col value]]
-;;                                   (let [batch-id (str "R" row "C" col)
-;;                                         entry-url (io/as-url (str cell-feed-url "/" batch-id))
-;;                                         entry (doto (CellEntry. row col value)
-;;                                                 (.setId (str entry-url))
-;;                                                 (BatchUtils/setBatchId batch-id)
-;;                                                 (BatchUtils/setBatchOperationType BatchOperationType/UPDATE))]
-;;                                     (-> batch-request .getEntries (.add entry))))
-;;             update-requests (doall (map create-update-entry cells))
-;;             cell-feed (.getFeed sheet-service cell-feed-url CellFeed)
-;;             batch-link (.getLink cell-feed ILink$Rel/FEED_BATCH ILink$Type/ATOM)
-;;             batch-url (io/as-url (.getHref batch-link))
-;;             _ (.setHeader sheet-service "If-Match" "*")] 
-;;         (.batch sheet-service batch-url batch-request)))))
+(t/ann ^:no-check batch-update-cells!
+       [cred/GoogleCtx String String (t/Seq '[Number Number String]) -> (t/U CellFeed
+                                                                             '{:error t/Keyword})])
+(defn batch-update-cells!
+  "Given a google-ctx configuration map, the id of a spreadsheet, the id of
+   a worksheet, and a list of cells(in the form [row column value]), sends a batch
+   request of all cell updates to the drive api. Will return {:error :msg} if 
+   something goes wrong along the way"
+  [google-ctx spreadsheet-id worksheet-id cells]
+  (let [sheet-service (build-sheet-service google-ctx)
+        spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        worksheet (if (contains? spreadsheet :error)
+                    spreadsheet
+                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
+        cell-feed-url (if (contains? worksheet :error)
+                        worksheet
+                        {:cell-feed-url (.getCellFeedUrl (:worksheet worksheet))})]
+    (if (contains? cell-feed-url :error)
+      cell-feed-url
+      (let [cell-feed-url (:cell-feed-url cell-feed-url)
+            batch-request (CellFeed.)
+            create-update-entry (fn [[row col value]]
+                                  (let [batch-id (str "R" row "C" col)
+                                        entry-url (io/as-url (str cell-feed-url "/" batch-id))
+                                        entry (doto (CellEntry. row col value)
+                                                (.setId (str entry-url))
+                                                (BatchUtils/setBatchId batch-id)
+                                                (BatchUtils/setBatchOperationType BatchOperationType/UPDATE))]
+                                    (-> batch-request .getEntries (.add entry))))
+            update-requests (doall (map create-update-entry cells))
+            cell-feed (.getFeed sheet-service cell-feed-url CellFeed)
+            batch-link (.getLink cell-feed ILink$Rel/FEED_BATCH ILink$Type/ATOM)
+            batch-url (io/as-url (.getHref batch-link))
+            _ (.setHeader sheet-service "If-Match" "*")] 
+        (.batch sheet-service batch-url batch-request)))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;; Read and Write entire Worksheets ;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 ;; (defn read-worksheet-headers
 ;;   "Given a Spreadsheet Service and a WorksheetEntry, return
@@ -376,15 +395,3 @@
 ;;             all-cells (partition-all 10000 value-cells)
 ;;             all-cells (cons (concat header-cells (first all-cells)) (rest all-cells))]
 ;;         (dorun (map #(batch-update-cells! google-ctx spreadsheet-id worksheet-id %) all-cells))))))
-
-;; #_;;Example Usage
-;; (defn example-update-data
-;;   "This is an example of uploading a tsv to drive, taking the spreadsheet
-;;    id that is returned, and using that as an IMPORTRANGE in another spreadsheet"
-;;   [google-ctx file parent-folder-id file-title file-description
-;;    media-type spreadsheet-id worksheet-id]
-;;   (let [upload-file-metadata (upload-file! google-ctx file parent-folder-id file-title file-description media-type)
-;;         spreadsheet-id (get upload-file-metadata "id")
-;;         ;;NOTE: We are using structure of IMPORTRANGE("sheet-id", "worksheet-name!A1:C10") to import from inserted sheet
-;;         value (str "=IMPORTRANGE(\"" spreadsheet-id "\", \"Sheet1!A1:H200\")")]
-;;     (update-cell! google-ctx spreadsheet-id worksheet-id [1 1 value])))

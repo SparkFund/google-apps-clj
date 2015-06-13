@@ -19,14 +19,24 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 4. Navigate to Credentials and click *Create new Client ID* under OAuth
 5. Create a [google-creds.edn file](https://github.com/dunn-mat/google-apps-clj/blob/master/config/google-creds.edn.template)
 6. Copy the Client ID, Client Secret, and Redirect URIs into your google-creds.edn. You will use the data in this file for getting the rest of your credententials and for the other APIs.
-7. Read in your google-creds.edn file like so `(edn/read-string (slurp "config/dev/matt-google-creds.edn"))`
+7. Read in your google-creds.edn file like so:
+   `(edn/read-string (slurp "config/matt-google-creds.edn"))`
 8. Call get-auth-map on this read in data and follow its instructions
 9. Copy the returned data into your google-creds.edn file under the `:auth-map` key. Reload it into your REPL.
 10. You are now ready to use the other APIs with your credential file
+
+### Drive API
+
+#### Supported Functionality
+
+### Spreadsheet API
+
+#### Supported Functionality
+
+## What's Next?
 
 ## License
 
 Copyright © 2015 
 
-Distributed under the Eclipse Public License either version 1.0 or (at
-your option) any later version.
+Distributed under the Eclipse Public License version 1.0.

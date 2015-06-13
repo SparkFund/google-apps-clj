@@ -1,6 +1,6 @@
 # google-apps-clj
 
-A Clojure library that wraps the Google Java API for different Google Applications.
+A Clojure library that wraps the Google Java API for different Google Applications. This library is fully supported by [core.typed](https://github.com/clojure/core.typed)
 
 ## Currently supported APIs
 
@@ -27,13 +27,35 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 ### Drive API
 
-#### Supported Functionality
+##### Supported Functionality
+
+* Uploading a file to drive
+* Downloading a file to drive
 
 ### Spreadsheet API
 
-#### Supported Functionality
+##### Supported Functionality
+
+* Creating a Worksheet inside of an existing Spreadsheet
+* Finding Spreadsheets by title and id, Worksheets by title and id, Cells by row column notation
+* Editing a Worksheet's rows, columns, and title
+* Editing individual cells in a Worksheet
+* Editing rows in a worksheet
+* Batch-updating large quantity of cells (improves performance)
+* Reading an entire Worksheet's values or headers, or both
+* Overwriting an entire Worksheet with a new set of data (destroys old data)
 
 ## What's Next?
+
+#### Drive API
+
+* Create a new blank file
+* Updating an existing file's title and description
+* Updating an existing file's associated properties
+
+#### Sheets API
+
+* More exact typing, remove no-checks
 
 ## License
 

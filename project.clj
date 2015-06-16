@@ -1,4 +1,4 @@
-(defproject google-apps-clj "0.1.0"
+(defproject google-apps-clj "0.1.1"
   :description "A Clojure library that wraps the Google Java API"
   :url "https://github.com/dunn-mat/google-apps-clj"
   :license {:name "Eclipse Public License"

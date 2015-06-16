@@ -4,16 +4,22 @@ A Clojure library that wraps the Google Java API for different Google Applicatio
 
 ## Obtaining
 If you are using Leiningen, you can add
-```[google-apps-clj "0.1.0"]```
+```
+[google-apps-clj "0.1.0"]
+```
 to your project.clj file and then run
-```lein deps```
+```
+lein deps
+```
 
 If you are using Maven:
-```<dependency>
-  <groupId>google-apps-clj</groupId>
+```
+<dependency>
+<groupId>google-apps-clj</groupId>
   <artifactId>google-apps-clj</artifactId>
   <version>0.1.0</version>
-</dependency>```
+  </dependency>
+```
 
 ## Currently supported APIs
 

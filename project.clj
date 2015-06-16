@@ -8,4 +8,5 @@
                  [com.google.gdata/core "1.47.1"]
                  [com.google.apis/google-api-services-drive "v2-rev168-1.20.0"]]
   :repositories [["releases" {:url "https://github.com/dunn-mat/google-apps-clj"
-                              :creds :gpg}]])
+                              :creds :gpg}]]
+  :deploy-repositories [["releases" :clojars]])

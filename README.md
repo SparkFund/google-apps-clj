@@ -5,7 +5,7 @@ A Clojure library that wraps the Google Java API for different Google Applicatio
 ## Obtaining
 If you are using Leiningen, you can add
 ```
-[google-apps-clj "0.1.1"]
+[google-apps-clj "0.1.2"]
 ```
 to your project.clj file and then run
 ```
@@ -18,7 +18,7 @@ If you are using Maven:
 <dependency>
   <groupId>google-apps-clj</groupId>
   <artifactId>google-apps-clj</artifactId>
-  <version>0.1.1</version>
+  <version>0.1.2</version>
 </dependency>
 ```
 

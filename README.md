@@ -83,4 +83,4 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 Copyright © 2015 
 
-Distributed under the Eclipse Public License version 1.0.
+Distributed under the Apache License, Version 2.0.

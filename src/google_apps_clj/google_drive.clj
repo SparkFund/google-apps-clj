@@ -25,8 +25,8 @@
     (cast Drive (doto (.build drive-builder)
                   assert))))
 
-(t/ann upload-file! [cred/GoogleCtx java.io.File String String String String -> File])
-(defn upload-file!
+(t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
+(defn upload-file
   "Given a google-ctx configuration map, a file to upload, an ID of 
    the parent folder you wish to insert the file in, the title of the 
    Drive file, the description of the Drive file, and the MIME type of
@@ -51,8 +51,8 @@
     (cast File (doto (.execute drive-file)
                  assert))))
 
-(t/ann download-file! [cred/GoogleCtx String String -> String])
-(defn download-file!
+(t/ann download-file [cred/GoogleCtx String String -> String])
+(defn download-file
   "Given a google-ctx configuration map, a file id to download, 
    and optionally a media type(defaults to csv), download the drive file
    and then read it in and return the result of reading the file or

@@ -51,6 +51,19 @@
     (cast File (doto (.execute drive-file)
                  assert))))
 
+(t/ann create-blank-file [cred/GoogleCtx String String String String -> File])
+(defn create-blank-file
+  "Given a google-ctx configuration map, an ID of the parent folder you
+   wish to insert the file in, the title of the Drive file, the description
+   of the Drive file, and the MIME type of the file(which will be converted 
+   into a google file type, builds a Drive Service and inserts a blank file 
+   into Google Drive with permissions of the folder it's inserted into. The 
+   owner is whomever owns the Credentials used to make the Drive Service"
+  [google-ctx parent-folder-id file-title file-description media-type]
+  (let [file (doto (java.io.File/createTempFile "temp" "temp")
+               assert)]
+    (upload-file google-ctx file parent-folder-id file-title file-description media-type)))
+
 (t/ann download-file [cred/GoogleCtx String String -> String])
 (defn download-file
   "Given a google-ctx configuration map, a file id to download, 

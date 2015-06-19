@@ -64,12 +64,31 @@
                assert)]
     (upload-file google-ctx file parent-folder-id file-title file-description media-type)))
 
+
+(t/ann update-file-title [cred/GoogleCtx String String -> File])
+(defn update-file-title
+  "Given a google-ctx configuration map, a file id, and a title,
+   updates the title of the given file to the given title."
+  [google-ctx file-id title]
+  (let [drive-service (build-drive-service google-ctx)
+        files (doto (.files ^Drive drive-service)
+                assert)
+        files-get (doto (.get files file-id)
+                    assert)
+        file (cast File (doto (.execute files-get)
+                          assert))
+        file (doto (.setTitle ^File file title)
+               assert)
+        update-request (doto (.update files file-id file)
+                         assert)]
+    (cast File (doto (.execute update-request)
+                 assert))))
+
 (t/ann download-file [cred/GoogleCtx String String -> String])
 (defn download-file
   "Given a google-ctx configuration map, a file id to download, 
-   and optionally a media type(defaults to csv), download the drive file
-   and then read it in and return the result of reading the file or
-   an error message if it is not found or if there are too many"
+   and a media type, download the drive file and then read it in 
+   and return the result of reading the file"
   [google-ctx file-id media-type]
   (let [drive-service (build-drive-service google-ctx)
         files (doto (.files ^Drive drive-service)

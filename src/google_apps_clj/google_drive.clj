@@ -130,3 +130,15 @@
                        assert)]
     (slurp input-stream)))
 
+(t/ann delete-file [cred/GoogleCtx String -> File])
+(defn delete-file
+  "Given a google-ctx configuration map, and a file
+   id to delete, moves that file to the trash"
+  [google-ctx file-id]
+  (let [drive-service (build-drive-service google-ctx)
+        files (doto (.files ^Drive drive-service)
+                assert)
+        delete-request (doto (.trash files file-id)
+                         assert)]
+    (cast File (doto (.execute delete-request)
+                 assert))))

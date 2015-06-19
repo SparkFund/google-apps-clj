@@ -84,6 +84,25 @@
     (cast File (doto (.execute update-request)
                  assert))))
 
+(t/ann update-file-description [cred/GoogleCtx String String -> File])
+(defn update-file-description
+  "Given a google-ctx configuration map, a file id, and a description,
+   updates the description of the given file to the given description."
+  [google-ctx file-id description]
+  (let [drive-service (build-drive-service google-ctx)
+        files (doto (.files ^Drive drive-service)
+                assert)
+        files-get (doto (.get files file-id)
+                    assert)
+        file (cast File (doto (.execute files-get)
+                          assert))
+        file (doto (.setDescription ^File file description)
+               assert)
+        update-request (doto (.update files file-id file)
+                         assert)]
+    (cast File (doto (.execute update-request)
+                 assert))))
+
 (t/ann download-file [cred/GoogleCtx String String -> String])
 (defn download-file
   "Given a google-ctx configuration map, a file id to download, 

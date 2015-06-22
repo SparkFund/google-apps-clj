@@ -214,10 +214,10 @@
           (< (count cells) 1) {:error :no-cells}
           :else {:error :more-than-one-cell})))
 
-(t/ann ^:no-check update-cell!
+(t/ann ^:no-check update-cell
        [cred/GoogleCtx String String '[Number Number String] -> (t/U CellEntry
                                                                      '{:error t/Keyword})])
-(defn update-cell!
+(defn update-cell
   "Given a google-ctx configuration map, the id of a spreadsheet,
    id of a worksheet in that spreadsheet, and a cell(in form [row col value],
    changes the value in the cell location inside of the given
@@ -241,10 +241,10 @@
             _ (.setHeader sheet-service "If-Match" "*") ]
         (.update sheet-service cell-url cell)))))
 
-(t/ann ^:no-check insert-row!
+(t/ann ^:no-check insert-row
        [cred/GoogleCtx String String (t/Seq (t/Map String String)) -> (t/U ListEntry
                                                                            '{:error t/Keyword})])
-(defn insert-row!
+(defn insert-row
   "Given a google-ctx configuration map, the name of a spreadsheet, 
    name of a worksheet in that spreadsheet, and a map of header-value pairs
    ({header value}) where header and value are both strings.
@@ -273,10 +273,10 @@
       (do (dorun (map update-value-by-header headers))
           (.insert sheet-service (:list-feed-url list-feed-url) row)))))
 
-(t/ann ^:no-check batch-update-cells!
+(t/ann ^:no-check batch-update-cells
        [cred/GoogleCtx String String (t/Seq '[Number Number String]) -> (t/U CellFeed
                                                                              '{:error t/Keyword})])
-(defn batch-update-cells!
+(defn batch-update-cells
   "Given a google-ctx configuration map, the id of a spreadsheet, the id of
    a worksheet, and a list of cells(in the form [row column value]), sends a batch
    request of all cell updates to the drive api. Will return {:error :msg} if 
@@ -391,7 +391,7 @@
             cols-needed (apply max (cons (count headers) (map count values)))
             worksheet-name (.getPlainText (.getTitle (:worksheet worksheet)))
             worksheet (update-worksheet-all-fields (:worksheet worksheet) 1 1 worksheet-name)
-            _ (update-cell! google-ctx spreadsheet-id worksheet-id [1 1 ""])
+            _ (update-cell google-ctx spreadsheet-id worksheet-id [1 1 ""])
             worksheet (update-worksheet-all-fields worksheet rows-needed cols-needed worksheet-name)
             build-cell (fn [column value]
                          [(inc column) value])
@@ -403,4 +403,4 @@
                              (apply concat (map-indexed build-row values)))
             all-cells (partition-all 10000 value-cells)
             all-cells (cons (concat header-cells (first all-cells)) (rest all-cells))]
-        (dorun (map #(batch-update-cells! google-ctx spreadsheet-id worksheet-id %) all-cells))))))
+        (dorun (map #(batch-update-cells google-ctx spreadsheet-id worksheet-id %) all-cells))))))

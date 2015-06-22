@@ -5,7 +5,7 @@ A Clojure library that wraps the Google Java API for different Google Applicatio
 ## Obtaining
 If you are using Leiningen, you can add
 ```
-[google-apps-clj "0.1.2"]
+[google-apps-clj "0.1.3"]
 ```
 to your project.clj file and then run
 ```
@@ -18,7 +18,7 @@ If you are using Maven:
 <dependency>
   <groupId>google-apps-clj</groupId>
   <artifactId>google-apps-clj</artifactId>
-  <version>0.1.2</version>
+  <version>0.1.3</version>
 </dependency>
 ```
 
@@ -51,8 +51,18 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 ##### Supported Functionality
 
+* Creating a blank file
 * Uploading a file to drive
+* Updating a file's title
+* Updating a file's description
+* Getting a file's key-value pair properties
+* Editing a file's key-value pair properties
+* Deleting a file's key-value pair properties
+* Getting a file's permissions
+* Editing a file's permissions (by user)
+* Deleting a file's permissions (by user)
 * Downloading a file to drive
+* Deleting a file from drive(moves it to the trash)
 
 ### Spreadsheet API
 
@@ -70,14 +80,13 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 ## What's Next?
 
 #### Drive API
-
-* Create a new blank file
-* Updating an existing file's title and description
-* Updating an existing file's associated properties
+* 
 
 #### Sheets API
+* 
 
-* More exact typing, remove no-checks
+#### Calendar API
+* New API!
 
 ## License
 

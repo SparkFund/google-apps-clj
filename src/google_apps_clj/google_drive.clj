@@ -28,6 +28,10 @@
     (cast Drive (doto (.build drive-builder)
                   assert))))
 
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
 (t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
 (defn upload-file
   "Given a google-ctx configuration map, a file to upload, an ID of 
@@ -67,6 +71,49 @@
                assert)]
     (upload-file google-ctx file parent-folder-id file-title file-description media-type)))
 
+(t/ann download-file [cred/GoogleCtx String String -> String])
+(defn download-file
+  "Given a google-ctx configuration map, a file id to download, 
+   and a media type, download the drive file and then read it in 
+   and return the result of reading the file"
+  [google-ctx file-id media-type]
+  (let [drive-service (build-drive-service google-ctx)
+        files (doto (.files ^Drive drive-service)
+                assert)
+        files-get (doto (.get files file-id)
+                    assert)
+        file (cast File (doto (.execute files-get)
+                          assert))
+        http-request (doto (.getRequestFactory ^Drive drive-service)
+                       assert)
+        export-link (doto (.getExportLinks ^File file)
+                      assert)
+        generic-url (GenericUrl. ^String (doto (cast String (get export-link media-type))
+                                                         assert))
+        get-request (doto (.buildGetRequest http-request generic-url)
+                      assert)
+        response (doto (.execute get-request)
+                   assert)
+        input-stream (doto (.getContent response)
+                       assert)]
+    (slurp input-stream)))
+
+(t/ann delete-file [cred/GoogleCtx String -> File])
+(defn delete-file
+  "Given a google-ctx configuration map, and a file
+   id to delete, moves that file to the trash"
+  [google-ctx file-id]
+  (let [drive-service (build-drive-service google-ctx)
+        files (doto (.files ^Drive drive-service)
+                assert)
+        delete-request (doto (.trash files file-id)
+                         assert)]
+    (cast File (doto (.execute delete-request)
+                 assert))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Edits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (t/ann update-file-title [cred/GoogleCtx String String -> File])
 (defn update-file-title
@@ -105,6 +152,10 @@
                          assert)]
     (cast File (doto (.execute update-request)
                  assert))))
+
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;; File Properties Management ;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (t/ann get-properties [cred/GoogleCtx String -> (t/Seq Property)])
 (defn get-properties
@@ -155,42 +206,6 @@
                          (.setVisibility visibility))]
     (.execute delete-request)))
 
-(t/ann download-file [cred/GoogleCtx String String -> String])
-(defn download-file
-  "Given a google-ctx configuration map, a file id to download, 
-   and a media type, download the drive file and then read it in 
-   and return the result of reading the file"
-  [google-ctx file-id media-type]
-  (let [drive-service (build-drive-service google-ctx)
-        files (doto (.files ^Drive drive-service)
-                assert)
-        files-get (doto (.get files file-id)
-                    assert)
-        file (cast File (doto (.execute files-get)
-                          assert))
-        http-request (doto (.getRequestFactory ^Drive drive-service)
-                       assert)
-        export-link (doto (.getExportLinks ^File file)
-                      assert)
-        generic-url (GenericUrl. ^String (doto (cast String (get export-link media-type))
-                                                         assert))
-        get-request (doto (.buildGetRequest http-request generic-url)
-                      assert)
-        response (doto (.execute get-request)
-                   assert)
-        input-stream (doto (.getContent response)
-                       assert)]
-    (slurp input-stream)))
-
-(t/ann delete-file [cred/GoogleCtx String -> File])
-(defn delete-file
-  "Given a google-ctx configuration map, and a file
-   id to delete, moves that file to the trash"
-  [google-ctx file-id]
-  (let [drive-service (build-drive-service google-ctx)
-        files (doto (.files ^Drive drive-service)
-                assert)
-        delete-request (doto (.trash files file-id)
-                         assert)]
-    (cast File (doto (.execute delete-request)
-                 assert))))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;; File Permissions Management ;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

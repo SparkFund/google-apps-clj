@@ -78,9 +78,15 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 #### Drive API
 
+* Permissions (list, edit, delete)
+
 #### Sheets API
 
-* More exact typing, remove no-checks
+* 
+
+### Calendar API
+
+* New API!
 
 ## License
 

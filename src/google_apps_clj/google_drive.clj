@@ -227,3 +227,36 @@
     (tu/ignore-with-unchecked-cast
      (.getItems ^PermissionList permissions)
      (t/Seq Permission))))
+
+(t/ann update-permission [cred/GoogleCtx String String String -> Permission])
+(defn update-permission
+  "Given a google-ctx configuration map, a file-id, an email address of the
+   user who's permissions we are editing, and a new role for the user on this
+   file(reader or writer, owner is not currently supported), adds or edits the
+   permissions for this user on the given file"
+  [google-ctx file-id email new-role]
+  (let [drive-service (build-drive-service google-ctx)
+        permissions (doto (.permissions ^Drive drive-service)
+                      assert)
+        permissions-for-file (tu/ignore-with-unchecked-cast
+                              (set (map #(get % "emailAddress")
+                                        (get-permissions google-ctx file-id)))
+                              (t/Set String))
+        id-request (doto (.getIdForEmail permissions email)
+                        assert)
+        permission-id (cast Permission (doto (.execute id-request)
+                                              assert))
+        permission-id (doto (.getId ^Permission permission-id)
+                        assert)
+        permission (doto (Permission.)
+                     (.setEmailAddress email)
+                     (.setRole new-role)
+                     (.setId permission-id)
+                     (.setType "user"))
+        request (if (contains? permissions-for-file email)
+                  (doto (.update permissions file-id permission-id permission)
+                    assert)
+                  (doto (.insert permissions file-id permission)
+                    assert))]
+    (tu/ignore-with-unchecked-cast (.execute request)
+                                   Permission)))

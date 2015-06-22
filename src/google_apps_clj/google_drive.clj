@@ -1,6 +1,7 @@
 (ns google-apps-clj.google-drive
   "A library for connecting to Google Drive through the Drive API"
   (:require [clojure.core.typed :as t]
+            [clojure.core.typed.unsafe :as tu]
             [clojure.edn :as edn :only [read-string]]
             [clojure.java.io :as io :only [as-url file resource]]
             [google-apps-clj.credentials :as cred])
@@ -10,7 +11,9 @@
                                           Drive$Builder
                                           DriveScopes)
            (com.google.api.services.drive.model File
-                                                ParentReference)))
+                                                ParentReference
+                                                Property
+                                                PropertyList)))
 
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
 
@@ -102,6 +105,55 @@
                          assert)]
     (cast File (doto (.execute update-request)
                  assert))))
+
+(t/ann get-properties [cred/GoogleCtx String -> (t/Seq Property)])
+(defn get-properties
+  "Given a google-ctx configuration map, and a file id, returns a
+   list of all Properties associated with this file"
+  [google-ctx file-id]
+  (let [drive-service (build-drive-service google-ctx)
+        properties (doto (.properties ^Drive drive-service)
+                     assert)
+        list-of-properties (doto (.list properties file-id)
+                             assert)
+        properties (cast PropertyList (doto (.execute list-of-properties)
+                                        assert))]
+    (tu/ignore-with-unchecked-cast
+     (.getItems ^PropertyList properties)
+     (t/Seq Property))))
+
+(t/ann update-property [cred/GoogleCtx String String String String -> Property])
+(defn update-property
+  "Given a google-ctx configuration map, a file id, a key, a value, and 
+   a visibility(public or private) updates the property on this file to
+   the new value if a property with the given key already exists, otherwise
+   create a new one with this key value pair"
+  [google-ctx file-id key value visibility]
+  (let [drive-service (build-drive-service google-ctx)
+        properties (doto (.properties ^Drive drive-service)
+                     assert)
+        property (doto (Property.)
+                   (.setKey key)
+                   (.setValue value)
+                   (.setVisibility visibility))
+        update-request (doto (.update properties file-id key property)
+                         assert
+                         (.setVisibility visibility))]
+    (cast Property (doto (.execute update-request)
+                     assert))))
+
+(t/ann delete-property [cred/GoogleCtx String String String -> t/Any])
+(defn delete-property
+  "Given a google-ctx configuration map, a file id, and a key,
+   deletes the property on this file associated with this key"
+  [google-ctx file-id key visibility]
+  (let [drive-service (build-drive-service google-ctx)
+        properties (doto (.properties ^Drive drive-service)
+                     assert)
+        delete-request (doto (.delete properties file-id key)
+                         assert
+                         (.setVisibility visibility))]
+    (.execute delete-request)))
 
 (t/ann download-file [cred/GoogleCtx String String -> String])
 (defn download-file

@@ -51,8 +51,15 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 ##### Supported Functionality
 
+* Creating a blank file
 * Uploading a file to drive
+* Updating a file's title
+* Updating a file's description
+* Getting a file's key-value pair properties
+* Editing a file's key-value pair properties
+* Deleting a file's key-value pair properties
 * Downloading a file to drive
+* Deleting a file from drive(moves it to the trash)
 
 ### Spreadsheet API
 
@@ -70,10 +77,6 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 ## What's Next?
 
 #### Drive API
-
-* Create a new blank file
-* Updating an existing file's title and description
-* Updating an existing file's associated properties
 
 #### Sheets API
 

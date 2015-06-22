@@ -12,6 +12,8 @@
                                           DriveScopes)
            (com.google.api.services.drive.model File
                                                 ParentReference
+                                                Permission
+                                                PermissionList
                                                 Property
                                                 PropertyList)))
 
@@ -165,9 +167,9 @@
   (let [drive-service (build-drive-service google-ctx)
         properties (doto (.properties ^Drive drive-service)
                      assert)
-        list-of-properties (doto (.list properties file-id)
-                             assert)
-        properties (cast PropertyList (doto (.execute list-of-properties)
+        all-properties (doto (.list properties file-id)
+                         assert)
+        properties (cast PropertyList (doto (.execute all-properties)
                                         assert))]
     (tu/ignore-with-unchecked-cast
      (.getItems ^PropertyList properties)
@@ -209,3 +211,19 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;; File Permissions Management ;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(t/ann get-permissions [cred/GoogleCtx String -> (t/Seq Permission)])
+(defn get-permissions
+  "Given a google-ctx configuration map, and a file-id, gets all of the
+   permissions for the given file"
+  [google-ctx file-id]
+  (let [drive-service (build-drive-service google-ctx)
+        permissions (doto (.permissions ^Drive drive-service)
+                     assert)
+        all-permissions (doto (.list permissions file-id)
+                          assert)
+        permissions (cast PermissionList (doto (.execute all-permissions)
+                                           assert))]
+    (tu/ignore-with-unchecked-cast
+     (.getItems ^PermissionList permissions)
+     (t/Seq Permission))))

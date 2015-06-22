@@ -58,6 +58,9 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 * Getting a file's key-value pair properties
 * Editing a file's key-value pair properties
 * Deleting a file's key-value pair properties
+* Getting a file's permissions
+* Editing a file's permissions (by user)
+* Deleting a file's permissions (by user)
 * Downloading a file to drive
 * Deleting a file from drive(moves it to the trash)
 
@@ -77,17 +80,11 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 ## What's Next?
 
 #### Drive API
-
-* Permissions (list, edit, delete)
-
-#### Sheets API
-
 * 
-
+#### Sheets API
+* 
 #### Calendar API
-
 * New API!
-
 ## License
 
 Copyright © 2015 

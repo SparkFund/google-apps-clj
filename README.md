@@ -81,10 +81,13 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 #### Drive API
 * 
+
 #### Sheets API
 * 
+
 #### Calendar API
 * New API!
+
 ## License
 
 Copyright © 2015 

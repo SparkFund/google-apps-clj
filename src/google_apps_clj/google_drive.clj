@@ -13,6 +13,7 @@
            (com.google.api.services.drive.model File
                                                 ParentReference
                                                 Permission
+                                                PermissionId
                                                 PermissionList
                                                 Property
                                                 PropertyList)))
@@ -244,9 +245,9 @@
                               (t/Set String))
         id-request (doto (.getIdForEmail permissions email)
                         assert)
-        permission-id (cast Permission (doto (.execute id-request)
+        permission-id (cast PermissionId (doto (.execute id-request)
                                               assert))
-        permission-id (doto (.getId ^Permission permission-id)
+        permission-id (doto (.getId ^PermissionId permission-id)
                         assert)
         permission (doto (Permission.)
                      (.setEmailAddress email)
@@ -260,3 +261,27 @@
                     assert))]
     (tu/ignore-with-unchecked-cast (.execute request)
                                    Permission)))
+
+(t/ann remove-permission [cred/GoogleCtx String String -> t/Any])
+(defn remove-permission
+  "Given a google-ctx configuration map, a file-id, and  an email address
+   of the user who's permissions we are editing, removes this user from
+   the permissions of the given file"
+  [google-ctx file-id email]
+  (let [drive-service (build-drive-service google-ctx)
+        permissions (doto (.permissions ^Drive drive-service)
+                      assert)
+        permissions-for-file (tu/ignore-with-unchecked-cast
+                              (set (map #(get % "emailAddress")
+                                        (get-permissions google-ctx file-id)))
+                              (t/Set String))
+        id-request (doto (.getIdForEmail permissions email)
+                        assert)
+        permission-id (cast PermissionId (doto (.execute id-request)
+                                              assert))
+        permission-id (doto (.getId ^PermissionId permission-id)
+                        assert)
+        delete-request (doto (.delete permissions file-id permission-id)
+                         assert)]
+    (if (contains? permissions-for-file email)
+      (.execute delete-request))))

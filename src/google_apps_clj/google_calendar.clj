@@ -86,7 +86,7 @@
    returns a list of this user's events for the given time period"
   [google-ctx start-time end-time]
   (let [calendar-service (build-calendar-service google-ctx)
-        events (doto (.events ^ Calendar calendar-service)
+        events (doto (.events ^Calendar calendar-service)
                  assert)
         start-time (DateTime. ^String start-time)
         end-time (DateTime. ^String end-time)
@@ -111,3 +111,27 @@
   (let [start-time (str day "T00:00:00" time-zone-offset ":00")
         end-time (str day "T23:59:59" time-zone-offset ":00")]
     (list-events google-ctx start-time end-time)))
+
+(t/ann list-events-by-name [cred/GoogleCtx String Number -> (t/Seq Event)])
+(defn list-events-by-name
+  "Given a google-ctx configuration map, a title that will be the query
+   of the event(this could be an email, title, description), and the max 
+   amount of results you wish to receive back, finds all events with these
+   specifications under the user's calendar"
+  [google-ctx title max-results]
+  (let [calendar-service (build-calendar-service google-ctx)
+        events (doto (.events ^Calendar calendar-service)
+                 assert)
+        start-time (DateTime. ^java.util.Date (java.util.Date.))
+        list-events (doto (.list events "primary")
+                      assert
+                      (.setQ title)
+                      (.setMaxResults (int max-results))
+                      (.setTimeMin start-time)
+                      (.setOrderBy "startTime")
+                      (.setSingleEvents true))
+        days-events (doto (.execute list-events)
+                      assert)]
+    (tu/ignore-with-unchecked-cast (doto (.getItems days-events)
+                                     assert)
+                                   (t/Seq Event))))

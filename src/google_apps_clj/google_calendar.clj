@@ -78,3 +78,26 @@
    creates a calendar event by calling add-calendar-event as an all day event"
   [google-ctx title description location start-time end-time attendees]
   (add-calendar-event google-ctx title description location start-time end-time attendees true))
+
+(t/ann list-day-events [cred/GoogleCtx String String -> (t/Seq Event)])
+(defn list-day-events
+  "Given a google-ctx configuration map, a day in the form(YYYY-MM-DD),
+   and an offset from the GMT time zone(in the form + or - 04 or 11, etc),
+   returns a list of this user's events for the given day"
+  [google-ctx day offset]
+  (let [calendar-service (build-calendar-service google-ctx)
+        events (doto (.events ^ Calendar calendar-service)
+                 assert)
+        start-time (DateTime. ^String (str day "T00:00:00" offset ":00"))
+        end-time (DateTime. ^String (str day "T23:59:59" offset ":00"))
+        list-events (doto (.list events "primary")
+                      assert
+                      (.setTimeMin start-time)
+                      (.setTimeMax end-time)
+                      (.setOrderBy "startTime")
+                      (.setSingleEvents true))
+        days-events (doto (.execute list-events)
+                      assert)]
+    (tu/ignore-with-unchecked-cast (doto (.getItems days-events)
+                                     assert)
+                                   (t/Seq Event))))

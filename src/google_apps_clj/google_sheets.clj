@@ -1,6 +1,6 @@
 (ns google-apps-clj.google-sheets
   (:require [clojure.core.typed :as t]
-            [clojure.core.typed.unsafe :as tc]
+            [clojure.core.typed.unsafe :as tu]
             [clojure.edn :as edn :only [read-string]]
             [clojure.java.io :as io :only [as-url file resource]]
             [google-apps-clj.credentials :as cred])
@@ -49,7 +49,7 @@
    with the given id in a map, or an error message in a map"
   [sheet-service id]
   (let [sheet-url (io/as-url (str spreadsheet-url "/" id))
-        entry (tc/ignore-with-unchecked-cast
+        entry (tu/ignore-with-unchecked-cast
                (.getEntry sheet-service sheet-url SpreadsheetEntry nil)
                SpreadsheetEntry)]
     (if entry
@@ -158,7 +158,7 @@
    the WorksheetEntry with the given id in a map, or an error message in a map"
   [sheet-service spreadsheet id]
   (let [url (io/as-url (str (.getWorksheetFeedUrl ^SpreadsheetEntry spreadsheet) "/" id))
-        entry (tc/ignore-with-unchecked-cast
+        entry (tu/ignore-with-unchecked-cast
                (.getEntry sheet-service url WorksheetEntry nil)
                WorksheetEntry)]
     (if entry

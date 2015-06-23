@@ -26,7 +26,8 @@ If you are using Maven:
 
 * Google OAuth 2.0
 * Google Drive
-* Google Spreadsheets.
+* Google Spreadsheets
+* Google Calendar
 
 ## Usage
 In order to use any of these APIs, you must first use the Google OAuth 2.0 library to set up your credentials. All the APIs rely on the credentials received from setting up OAuth 2.0.
@@ -77,6 +78,16 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 * Reading an entire Worksheet's values or headers, or both
 * Overwriting an entire Worksheet with a new set of data (destroys old data)
 
+### Calendar API
+
+##### Supported Functionality
+
+* Listing all events within a certain date-time range (for user)
+* Listing all events on a given day (for user)
+* Listing upcoming events with a supplied name (for user)
+* Creating an event with a certain time range 
+* Creating an all day event
+
 ## What's Next?
 
 #### Drive API
@@ -86,7 +97,7 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 * 
 
 #### Calendar API
-* New API!
+* 
 
 ## License
 

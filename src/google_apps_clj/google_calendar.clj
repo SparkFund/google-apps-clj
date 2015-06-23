@@ -79,17 +79,17 @@
   [google-ctx title description location start-time end-time attendees]
   (add-calendar-event google-ctx title description location start-time end-time attendees true))
 
-(t/ann list-day-events [cred/GoogleCtx String String -> (t/Seq Event)])
-(defn list-day-events
-  "Given a google-ctx configuration map, a day in the form(YYYY-MM-DD),
-   and an offset from the GMT time zone(in the form + or - 04 or 11, etc),
-   returns a list of this user's events for the given day"
-  [google-ctx day offset]
+(t/ann list-events [cred/GoogleCtx String String -> (t/Seq Event)])
+(defn list-events
+  "Given a google-ctx configuration map, a start time and an end time
+   (in YYYY-MM-DDTHH:MM:SS(+ or - hours off GMT like 4:00)),
+   returns a list of this user's events for the given time period"
+  [google-ctx start-time end-time]
   (let [calendar-service (build-calendar-service google-ctx)
         events (doto (.events ^ Calendar calendar-service)
                  assert)
-        start-time (DateTime. ^String (str day "T00:00:00" offset ":00"))
-        end-time (DateTime. ^String (str day "T23:59:59" offset ":00"))
+        start-time (DateTime. ^String start-time)
+        end-time (DateTime. ^String end-time)
         list-events (doto (.list events "primary")
                       assert
                       (.setTimeMin start-time)
@@ -101,3 +101,13 @@
     (tu/ignore-with-unchecked-cast (doto (.getItems days-events)
                                      assert)
                                    (t/Seq Event))))
+
+(t/ann list-day-events [cred/GoogleCtx String String -> (t/Seq Event)])
+(defn list-day-events
+  "Given a google-ctx configuration map, a day in the form(YYYY-MM-DD),
+   and an offset from the GMT time zone(in the form + or - 04 or 11, etc),
+   returns a list of this user's events for the given day"
+  [google-ctx day time-zone-offset]
+  (let [start-time (str day "T00:00:00" time-zone-offset ":00")
+        end-time (str day "T23:59:59" time-zone-offset ":00")]
+    (list-events google-ctx start-time end-time)))

@@ -390,9 +390,8 @@
             rows-needed (inc (count values))
             cols-needed (apply max (cons (count headers) (map count values)))
             worksheet-name (.getPlainText (.getTitle (:worksheet worksheet)))
-            worksheet (update-worksheet-all-fields (:worksheet worksheet) 1 1 worksheet-name)
-            _ (update-cell google-ctx spreadsheet-id worksheet-id [1 1 ""])
-            worksheet (update-worksheet-all-fields worksheet rows-needed cols-needed worksheet-name)
+            worksheet (update-worksheet-all-fields (:worksheet worksheet)
+                                                   rows-needed cols-needed worksheet-name)
             build-cell (fn [column value]
                          [(inc column) value])
             build-row (fn [row-number row]

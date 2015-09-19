@@ -53,6 +53,19 @@
                        {(get file-map "id") (get file-map "title")}))]
     (into {} (map extract-id all-files))))
 
+(t/ann get-file [cred/GoogleCtx String -> File])
+(defn get-file
+  "Given a google-ctx configuration map and the id of the desired
+  file as a string, returns that file as a drive File object"
+  [google-ctx file-id]
+  (let [drive-service (build-drive-service google-ctx)
+        drive-files (doto (.files ^Drive drive-service)
+                      assert)
+        get-file (doto (.get drive-files file-id)
+                   assert)]
+    (cast File (doto (.execute get-file)
+                 assert))))
+
 (t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
 (defn upload-file
   "Given a google-ctx configuration map, a file to upload, an ID of 

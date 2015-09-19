@@ -35,6 +35,24 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
+(t/ann ^:no-check get-file-ids [cred/GoogleCtx -> (t/Map String String)])
+(defn get-file-ids
+  "Given a google-ctx configuration map, gets the file-id and title
+   for every file under the users Drive as a map in the structure
+   of {file-id file-title}"
+  [google-ctx]
+  (let [drive-service (build-drive-service google-ctx)
+        drive-files (doto (.files ^Drive drive-service)
+                      assert)
+        files-list (doto (.list drive-files)
+                     assert)
+        all-files (doto (.getItems (.execute files-list))
+                    assert)
+        extract-id (fn [file]
+                     (let [file-map (into {} file)]
+                       {(get file-map "id") (get file-map "title")}))]
+    (into {} (map extract-id all-files))))
+
 (t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
 (defn upload-file
   "Given a google-ctx configuration map, a file to upload, an ID of 

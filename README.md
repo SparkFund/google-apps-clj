@@ -52,6 +52,8 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 ##### Supported Functionality
 
+* Getting all file ids and titles(in a map)
+* Getting a file by id
 * Creating a blank file
 * Uploading a file to drive
 * Updating a file's title

@@ -11,7 +11,8 @@
                                                          GoogleCredential$Builder
                                                          GoogleTokenResponse)
            (com.google.api.client.googleapis.javanet GoogleNetHttpTransport)
-           (com.google.api.client.http HttpTransport)
+           (com.google.api.client.http HttpTransport
+                                       HttpRequestInitializer)
            (com.google.api.client.json JsonFactory)
            (com.google.api.client.json.jackson2 JacksonFactory)))
 
@@ -21,7 +22,9 @@
                         :auth-map '{:access-token String
                                     :expires-in Number
                                     :refresh-token String
-                                    :token-type String}})
+                                    :token-type String}
+                        :connect-timeout (t/Option Long)
+                        :read-timeout (t/Option Long)})
 
 (t/non-nil-return com.google.api.client.json.jackson2.JacksonFactory/getDefaultInstance :all)
 (t/non-nil-return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport/newTrustedTransport :all)
@@ -82,9 +85,9 @@
       (.setRefreshToken (:refresh-token auth-map))
       (.setTokenType (:token-type auth-map)))))
 
-(t/ann build-credential [GoogleCtx -> Credential])
+(t/ann build-credential [GoogleCtx -> HttpRequestInitializer])
 (defn build-credential
-  "Given a google-ctx configuration map, builds a GoogleCredential Object from 
+  "Given a google-ctx configuration map, builds a GoogleCredential Object from
    the token response and google secret created from those respective methods."
   [google-ctx]
   (let [token-response (get-token-response google-ctx)
@@ -95,5 +98,14 @@
                              (.setClientSecrets google-secret))
         credential (doto (.build credential-builder)
                      assert
-                     (.setFromTokenResponse token-response))]
-    credential))
+                     (.setFromTokenResponse token-response))
+        {:keys [connect-timeout read-timeout]} google-ctx]
+    (if (or connect-timeout read-timeout)
+      (reify HttpRequestInitializer
+        (initialize [_ request]
+          (.initialize credential request)
+          (when connect-timeout
+            (.setConnectTimeout request connect-timeout))
+          (when read-timeout
+            (.setReadTimeout request read-timeout))))
+      credential)))

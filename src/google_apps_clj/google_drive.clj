@@ -22,7 +22,7 @@
 
 (t/ann build-drive-service [cred/GoogleCtx -> Drive])
 (defn build-drive-service
-  "Given a google-ctx configuration map, builds a Drive service using 
+  "Given a google-ctx configuration map, builds a Drive service using
    credentials coming from the OAuth2.0 credential setup inside google-ctx"
   [google-ctx]
   (let [drive-builder (->> google-ctx
@@ -53,6 +53,20 @@
                        {(get file-map "id") (get file-map "title")}))]
     (into {} (map extract-id all-files))))
 
+(t/ann get-root-files [cred/GoogleCtx String -> (t/Seq File)])
+(defn get-root-files
+  "Given a google-ctx configuration map, gets a seq of files from the user's
+   root folder"
+  [google-ctx]
+  (let [files (some-> (build-drive-service google-ctx)
+                      .files
+                      .list
+                      (.setQ "'root' in parents and trashed=false")
+                      .execute
+                      .getItems)]
+    (assert files)
+    (tu/ignore-with-unchecked-cast files (t/Seq File))))
+
 (t/ann get-file [cred/GoogleCtx String -> File])
 (defn get-file
   "Given a google-ctx configuration map and the id of the desired
@@ -68,8 +82,8 @@
 
 (t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
 (defn upload-file
-  "Given a google-ctx configuration map, a file to upload, an ID of 
-   the parent folder you wish to insert the file in, the title of the 
+  "Given a google-ctx configuration map, a file to upload, an ID of
+   the parent folder you wish to insert the file in, the title of the
    Drive file, the description of the Drive file, and the MIME type of
    the file, builds a Drive Service and inserts this file into Google
    Drive with permissions of the folder it's inserted into. The owner
@@ -96,9 +110,9 @@
 (defn create-blank-file
   "Given a google-ctx configuration map, an ID of the parent folder you
    wish to insert the file in, the title of the Drive file, the description
-   of the Drive file, and the MIME type of the file(which will be converted 
-   into a google file type, builds a Drive Service and inserts a blank file 
-   into Google Drive with permissions of the folder it's inserted into. The 
+   of the Drive file, and the MIME type of the file(which will be converted
+   into a google file type, builds a Drive Service and inserts a blank file
+   into Google Drive with permissions of the folder it's inserted into. The
    owner is whomever owns the Credentials used to make the Drive Service"
   [google-ctx parent-folder-id file-title file-description media-type]
   (let [file (doto (java.io.File/createTempFile "temp" "temp")
@@ -107,8 +121,8 @@
 
 (t/ann download-file [cred/GoogleCtx String String -> String])
 (defn download-file
-  "Given a google-ctx configuration map, a file id to download, 
-   and a media type, download the drive file and then read it in 
+  "Given a google-ctx configuration map, a file id to download,
+   and a media type, download the drive file and then read it in
    and return the result of reading the file"
   [google-ctx file-id media-type]
   (let [drive-service (build-drive-service google-ctx)
@@ -209,7 +223,7 @@
 
 (t/ann update-property [cred/GoogleCtx String String String String -> Property])
 (defn update-property
-  "Given a google-ctx configuration map, a file id, a key, a value, and 
+  "Given a google-ctx configuration map, a file id, a key, a value, and
    a visibility(public or private) updates the property on this file to
    the new value if a property with the given key already exists, otherwise
    create a new one with this key value pair"

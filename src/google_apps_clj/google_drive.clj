@@ -53,19 +53,58 @@
                        {(get file-map "id") (get file-map "title")}))]
     (into {} (map extract-id all-files))))
 
-(t/ann get-root-files [cred/GoogleCtx String -> (t/Seq File)])
+(t/ann query-files [cred/GoogleCtx String -> (t/Vec File)])
+(defn query-files
+  "Runs the given query against the given context and returns the results
+   as a vector of File objects"
+  [google-ctx query]
+  ;; The Drive object explicitly disclaims thread-safety, and the contracts
+  ;; given by the execute response and items are unclear, so instead of
+  ;; concatenating the items, we explicitly copy them into a vector.
+  ;;
+  ;; We eagerly realize the results to avoid the stack abuse given by the naive
+  ;; lazy seq recursive concat approach, as well as to reduce the chance of
+  ;; drive mutations affecting the results.
+  (let [request (some-> (build-drive-service google-ctx)
+                        .files
+                        .list
+                        (.setQ query))
+        results (transient [])]
+    (loop []
+      (let [response (.execute request)]
+        (doseq [file (.getItems response)]
+          (conj! results file))
+        (when-let [page-token (.getNextPageToken response)]
+          (.setPageToken request page-token)
+          (recur))))
+    (persistent! results)))
+
+(t/ann get-files [cred/GoogleCtx File -> (t/Vec File)])
+(defn get-files
+  "Returns a seq of files in the given folder"
+  [google-ctx folder]
+  (query-files google-ctx
+               (str "'" (.getId folder) "' in parents and trashed=false")))
+
+(t/ann folder? [File -> Boolean])
+(defn folder?
+  "Returns true if the file is a folder"
+  [file]
+  (= "application/vnd.google-apps.folder" (.getMimeType file)))
+
+(t/ann folder-seq [cred/GoogleCtx File -> (t/Seq File)])
+(defn folder-seq
+  "Returns a lazy seq of all files in the given folder, including itself, via a
+   depth-first traversal"
+  [google-ctx folder]
+  (tree-seq folder? (partial get-files google-ctx) folder))
+
+(t/ann get-root-files [cred/GoogleCtx -> (t/Vec File)])
 (defn get-root-files
   "Given a google-ctx configuration map, gets a seq of files from the user's
    root folder"
   [google-ctx]
-  (let [files (some-> (build-drive-service google-ctx)
-                      .files
-                      .list
-                      (.setQ "'root' in parents and trashed=false")
-                      .execute
-                      .getItems)]
-    (assert files)
-    (tu/ignore-with-unchecked-cast files (t/Seq File))))
+  (query-files google-ctx "'root' in parents and trashed=false"))
 
 (t/ann get-file [cred/GoogleCtx String -> File])
 (defn get-file

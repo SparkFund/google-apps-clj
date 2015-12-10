@@ -4,13 +4,22 @@
             [clojure.core.typed.unsafe :as tu]
             [clojure.edn :as edn :only [read-string]]
             [clojure.java.io :as io :only [as-url file resource]]
+            [clojure.string :as string]
             [google-apps-clj.credentials :as cred])
-  (:import (com.google.api.client.http FileContent
+  (:import (com.google.api.client.googleapis.batch BatchRequest
+                                                   BatchCallback)
+           (com.google.api.client.googleapis.batch.json JsonBatchCallback)
+           (com.google.api.client.googleapis.json GoogleJsonErrorContainer)
+           (com.google.api.client.http FileContent
                                        GenericUrl)
            (com.google.api.services.drive Drive
                                           Drive$Builder
+                                          Drive$Files$List
+                                          Drive$Permissions$List
+                                          DriveRequest
                                           DriveScopes)
            (com.google.api.services.drive.model File
+                                                FileList
                                                 ParentReference
                                                 Permission
                                                 PermissionId
@@ -21,7 +30,7 @@
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
 
 (t/ann build-drive-service [cred/GoogleCtx -> Drive])
-(defn build-drive-service
+(defn ^Drive build-drive-service
   "Given a google-ctx configuration map, builds a Drive service using
    credentials coming from the OAuth2.0 credential setup inside google-ctx"
   [google-ctx]
@@ -30,6 +39,88 @@
                            (Drive$Builder. cred/http-transport cred/json-factory))]
     (cast Drive (doto (.build drive-builder)
                   assert))))
+
+(t/defalias Query
+  '{:type String
+    :fields '[Keyword]
+    :query (t/Maybe String)
+    :file-id (t/Maybe String)})
+
+(t/defalias Request
+  (t/U Drive$Files$List
+       Drive$Permissions$List))
+
+(t/ann build-request [cred/GoogleCtx Query -> Request])
+(defn build-request
+  [google-ctx query]
+  (let [drive (build-drive-service google-ctx)
+        {:keys [type fields]} query
+        type-fields (case type
+                      :file ["nextPageToken"]
+                      [])
+        item-fields (if (seq fields)
+                      [(format "items(%s)"
+                               (string/join "," (map name fields)) ")")]
+                      ["items"])
+        fields (string/join "," (concat type-fields item-fields))]
+    (case type
+      :file
+      (let [{:keys [query]} query]
+        (-> (.list (.files drive))
+            (.setFields fields)
+            (.setMaxResults (int 1))
+            (cond-> query (.setQ query))))
+      :permissions
+      (let [{:keys [file-id]} query]
+        (-> (.list (.permissions drive) file-id)
+            (.setFields fields))))))
+
+(t/ann-protocol Executable
+                execute*! [Request -> (t/Vec t/Any)])
+(defprotocol Executable
+  (execute*! [_]))
+
+(extend-protocol Executable
+  Drive$Files$List
+  (execute*! [request]
+    (let [results (transient [])]
+      (loop []
+        (let [response ^FileList (.execute request)]
+          (doseq [item (.getItems response)]
+            (conj! results item))
+          (when-let [page-token (.getNextPageToken response)]
+            (.setPageToken request page-token)
+            (recur))))
+      (persistent! results)))
+  Drive$Permissions$List
+  (execute*! [request]
+    (let [response ^PermissionList (.execute request)]
+      (into [] (.getItems response)))))
+
+(t/ann execute! [cred/GoogleCtx Query -> (t/Vec t/Any)])
+(defn execute!
+  [google-ctx query]
+  (execute*! (build-request google-ctx query)))
+
+;; TODO What happens when responses have next page tokens?
+(defn execute-batch*!
+  [google-ctx requests]
+  (let [credential (cred/build-credential google-ctx)
+        batch (BatchRequest. cred/http-transport credential)
+        responses (transient {})]
+    (doseq [request requests]
+      (.queue request batch GoogleJsonErrorContainer
+              (reify BatchCallback
+                (onSuccess [_ response headers]
+                  (assoc! responses request response))
+                (onFailure [_ error headers]
+                  (assoc! responses request error)))))
+    (.execute batch)
+    (persistent! responses)))
+
+(defn execute-batch!
+  [google-ctx queries]
+  (execute-batch*! google-ctx (map (partial build-request google-ctx) queries)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -70,14 +161,15 @@
                         .list
                         (.setQ query))
         results (transient [])]
-    (loop []
-      (let [response (.execute request)]
-        (doseq [file (.getItems response)]
-          (conj! results file))
-        (when-let [page-token (.getNextPageToken response)]
-          (.setPageToken request page-token)
-          (recur))))
-    (persistent! results)))
+    request
+    #_(loop []
+        (let [response (.execute request)]
+          (doseq [file (.getItems response)]
+            (conj! results file))
+          (when-let [page-token (.getNextPageToken response)]
+            (.setPageToken request page-token)
+            (recur))))
+    #_(persistent! results)))
 
 (t/ann get-files [cred/GoogleCtx File -> (t/Vec File)])
 (defn get-files

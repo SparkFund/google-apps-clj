@@ -8,7 +8,6 @@
             [google-apps-clj.credentials :as cred])
   (:import (com.google.api.client.googleapis.batch BatchRequest
                                                    BatchCallback)
-           (com.google.api.client.googleapis.batch.json JsonBatchCallback)
            (com.google.api.client.googleapis.json GoogleJsonErrorContainer)
            (com.google.api.client.http FileContent
                                        GenericUrl)
@@ -17,6 +16,7 @@
                                           Drive$Builder
                                           Drive$Files$Get
                                           Drive$Files$List
+                                          Drive$Files$Update
                                           Drive$Permissions$List
                                           DriveRequest
                                           DriveScopes)
@@ -62,14 +62,15 @@
    given google context. Queries are maps with the following required
    fields:
 
-   :type - :files or :permissions
-   :action - :list or :get
+   :type - :files, :permissions
+   :action - :list, :get, :update
 
    Other fields may be given, and may be required by the action and type:
 
    :fields - a seq of keywords specifying the object projection
    :query - used to constrain a list of files
-   :file-id - specifies the file for file-specific types and actions"
+   :file-id - specifies the file for file-specific types and actions
+   :updates - provides the attributes of the object to change"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
         {:keys [type action fields]} query
@@ -96,6 +97,14 @@
         :get
         (let [{:keys [file-id]} query]
           (cond-> (.get (.files drive) file-id)
+            fields (.setFields fields)))
+        :update
+        (let [{:keys [file-id updates]} query
+              {:keys [title description]} updates
+              file (cond-> (File.)
+                     title (.setTitle title)
+                     description (.setDescription description))]
+          (cond-> (.update (.files drive) file-id file)
             fields (.setFields fields))))
       :permissions
       (case action
@@ -122,6 +131,11 @@
     (.getItems response))
 
   Drive$Files$Get
+  (next-page! [request response])
+  (response-data [request ^File response]
+    response)
+
+  Drive$Files$Update
   (next-page! [request response])
   (response-data [request ^File response]
     response)

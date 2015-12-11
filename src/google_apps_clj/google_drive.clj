@@ -12,6 +12,7 @@
            (com.google.api.client.googleapis.json GoogleJsonErrorContainer)
            (com.google.api.client.http FileContent
                                        GenericUrl)
+           (com.google.api.client.util GenericData)
            (com.google.api.services.drive Drive
                                           Drive$Builder
                                           Drive$Files$List
@@ -51,7 +52,7 @@
        Drive$Permissions$List))
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
-(defn build-request
+(defn ^DriveRequest build-request
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
         {:keys [type fields]} query
@@ -75,50 +76,61 @@
         (-> (.list (.permissions drive) file-id)
             (.setFields fields))))))
 
-(t/ann-protocol Executable
-                execute*! [Request -> (t/Vec t/Any)])
-(defprotocol Executable
-  (execute*! [_]))
+(defprotocol Requestable
+  (next-page! [_ response]))
 
 (extend-protocol Executable
   Drive$Files$List
-  (execute*! [request]
-    (let [results (transient [])]
-      (loop []
-        (let [response ^FileList (.execute request)]
-          (doseq [item (.getItems response)]
-            (conj! results item))
-          (when-let [page-token (.getNextPageToken response)]
-            (.setPageToken request page-token)
-            (recur))))
-      (persistent! results)))
+  (next-page! [request ^FileList response]
+    (when-let [page-token (.getNextPageToken response)]
+      (.setPageToken request page-token)))
   Drive$Permissions$List
-  (execute*! [request]
-    (let [response ^PermissionList (.execute request)]
-      (into [] (.getItems response)))))
+  (next-page! [request response]))
 
 (t/ann execute! [cred/GoogleCtx Query -> (t/Vec t/Any)])
 (defn execute!
   [google-ctx query]
-  (execute*! (build-request google-ctx query)))
+  (let [request (build-request google-ctx query)
+        results (transient [])]
+    (loop []
+      (let [response ^GenericData (.execute request)]
+        (doseq [item (.get response "items")]
+          (conj! results item))
+        (when (next-page! request response)
+          (recur))))
+    (persistent! results)))
 
-;; TODO What happens when responses have next page tokens?
 (defn execute-batch*!
   [google-ctx requests]
   (let [credential (cred/build-credential google-ctx)
         batch (BatchRequest. cred/http-transport credential)
-        responses (transient {})]
-    (doseq [request requests]
-      (.queue request batch GoogleJsonErrorContainer
-              (reify BatchCallback
-                (onSuccess [_ response headers]
-                  (assoc! responses request response))
-                (onFailure [_ error headers]
-                  (assoc! responses request error)))))
-    (.execute batch)
-    (persistent! responses)))
+        responses (into [] (repeatedly (count requests) #(transient [])))]
+    (loop [requests (map-indexed vector requests)]
+      (let [next-requests (transient {})]
+        (doseq [[i ^DriveRequest request] requests]
+          (.queue request batch GoogleJsonErrorContainer
+                  (reify BatchCallback
+                    (onSuccess [_ http-response headers]
+                      (let [items (get http-response "items")
+                            response (nth responses i)]
+                        (doseq [item items]
+                          (conj! response item)))
+                      (when (next-page! request http-response)
+                        (assoc! next-requests i request)))
+                    (onFailure [_ error headers]
+                      ;; FIXME do better
+                      (throw (Exception. "sad"))))))
+        (.execute batch)
+        (let [next-requests (persistent! next-requests)]
+          (when (seq next-requests)
+            (recur next-requests)))))
+    (mapv persistent! responses)))
 
 (defn execute-batch!
+  "Execute the given queries in a batch, returning a vector of the items of
+   their responses in the same order as the queries. If any queries in a batch
+   yield paginated responses, another batch will be executed for all such
+   queries, iteratively until all pages have been received."
   [google-ctx queries]
   (execute-batch*! google-ctx (map (partial build-request google-ctx) queries)))
 

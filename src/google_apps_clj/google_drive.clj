@@ -158,9 +158,12 @@
             data (response-data request response)]
         (if (next-page! request response)
           (do
-            (swap! results (fnil into []) data)
+            (swap! results (fn [extant] (into (or extant []) data)))
             (recur))
-          (reset! results data))))
+          (swap! results (fn [extant]
+                           (if extant
+                             (into extant data)
+                             data))))))
     @results))
 
 (defn execute-batch!
@@ -180,12 +183,14 @@
           (.queue request batch GoogleJsonErrorContainer
                   (reify BatchCallback
                     (onSuccess [_ response headers]
-                      (let [data (response-data request response)]
+                      (let [data (response-data request response)
+                            extant (nth responses i)]
                         (if (next-page! request response)
-                          (let [extant (or (nth responses i) [])]
+                          (let [response (into (or extant []) data)]
                             (assoc! next-requests i request)
-                            (assoc! responses i (into extant data)))
-                          (assoc! responses i data))))
+                            (assoc! responses i response))
+                          (let [response (if extant (into extant data) data)]
+                            (assoc! responses i response)))))
                     (onFailure [_ error headers]
                       (assoc! responses i error)))))
         (.execute batch)

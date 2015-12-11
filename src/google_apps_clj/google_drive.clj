@@ -15,6 +15,7 @@
            (com.google.api.client.util GenericData)
            (com.google.api.services.drive Drive
                                           Drive$Builder
+                                          Drive$Files$Get
                                           Drive$Files$List
                                           Drive$Permissions$List
                                           DriveRequest
@@ -44,74 +45,119 @@
 ;;; Experimental fns operating on query data structures, with support for batching
 
 (t/defalias Query
-  '{:type String
+  '{:type Keyword
+    :action Keyword
     :fields '[Keyword]
     :query (t/Maybe String)
     :file-id (t/Maybe String)})
 
 (t/defalias Request
   (t/U Drive$Files$List
+       Drive$Files$Get
        Drive$Permissions$List))
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
 (defn ^DriveRequest build-request
-  "Converts a query map into a stateful request object executable in the
-   given google context"
+  "Converts a query into a stateful request object executable in the
+   given google context. Queries are maps with the following required
+   fields:
+
+   :type - :files or :permissions
+   :action - :list or :get
+
+   Other fields may be given, and may be required by the action and type:
+
+   :fields - a seq of keywords specifying the object projection
+   :query - used to constrain a list of files
+   :file-id - specifies the file for file-specific types and actions"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
-        {:keys [type fields]} query
-        type-fields (case type
-                      :file ["nextPageToken"]
-                      [])
-        item-fields (if (seq fields)
-                      [(format "items(%s)"
-                               (string/join "," (map name fields)) ")")]
-                      ["items"])
-        fields (string/join "," (concat type-fields item-fields))]
+        {:keys [type action fields]} query
+        fields (when (seq fields) (string/join "," (map name fields)))
+        items? (= :list action)
+        fields-seq (cond-> []
+                     (and items? (= type :files))
+                     (conj "nextPageToken")
+                     (and items? fields)
+                     (conj (format "items(%s)" fields))
+                     (and items? (not fields))
+                     (conj "items")
+                     (and (not items?) fields)
+                     (conj fields))
+        fields (when (seq fields-seq) (string/join "," fields-seq))]
     (case type
-      :file
-      (let [{:keys [query]} query]
-        (-> (.list (.files drive))
-            (.setFields fields)
-            (.setMaxResults (int 1))
-            (cond-> query (.setQ query))))
+      :files
+      (case action
+        :list
+        (let [{:keys [query]} query]
+          (cond-> (.list (.files drive))
+            fields (.setFields fields)
+            query (.setQ query)))
+        :get
+        (let [{:keys [file-id]} query]
+          (cond-> (.get (.files drive) file-id)
+            fields (.setFields fields))))
       :permissions
-      (let [{:keys [file-id]} query]
-        (-> (.list (.permissions drive) file-id)
-            (.setFields fields))))))
+      (case action
+        :list
+        (let [{:keys [file-id]} query]
+          (cond-> (.list (.permissions drive) file-id)
+            fields (.setFields fields)))))))
 
 (defprotocol Requestable
+  (response-data
+   [request response]
+   "Extracts the good bit from the response")
   (next-page!
+   [request response]
    "Mutates the request to retrieve the next page of results if supported and
-    present"
-   [request response]))
+    present"))
 
 (extend-protocol Requestable
   Drive$Files$List
   (next-page! [request ^FileList response]
     (when-let [page-token (.getNextPageToken response)]
       (.setPageToken request page-token)))
-  Drive$Permissions$List
-  (next-page! [request response]))
+  (response-data [request ^FileList response]
+    (.getItems response))
 
-(t/ann execute! [cred/GoogleCtx Query -> (t/Vec t/Any)])
+  Drive$Files$Get
+  (next-page! [request response])
+  (response-data [request ^File response]
+    response)
+
+  Drive$Permissions$List
+  (next-page! [request response])
+  (response-data [request ^PermissionList response]
+    (.getItems response)))
+
 (defn execute!
-  "Executes the given query in the google context and returns a vector of results.
-   All results are eagerly fetched if paginated."
+  "Executes the given query in the google context and returns the results.
+   If the response is paginated, all results are fetched and concatenated
+   into a vector."
   [google-ctx query]
   (let [request (build-request google-ctx query)
-        results (transient [])]
+        results (atom nil)]
+    ; TODO the results could be a volatile in clojure 1.7
     (loop []
-      (let [response ^GenericData (.execute request)]
-        (doseq [item (.get response "items")]
-          (conj! results item))
-        (when (next-page! request response)
-          (recur))))
-    (persistent! results)))
+      (let [response (.execute request)
+            data (response-data request response)]
+        (if (next-page! request response)
+          (do
+            (swap! results (fnil into []) data)
+            (recur))
+          (reset! results data))))
+    @results))
 
-(defn execute-batch*!
-  [google-ctx requests]
-  (let [credential (cred/build-credential google-ctx)
+(defn execute-batch!
+  "Execute the given queries in a batch, returning their responses in
+   the same order as the queries. If any queries in a batch yield
+   paginated responses, another batch will be executed for all such
+   queries, iteratively until all pages have been received, and the
+   results concatenated into vectors as in execute!."
+  [google-ctx queries]
+  (let [requests (map (partial build-request google-ctx) queries)
+        credential (cred/build-credential google-ctx)
         batch (BatchRequest. cred/http-transport credential)
         responses (transient (into [] (repeat (count requests) nil)))]
     (loop [requests (map-indexed vector requests)]
@@ -119,13 +165,13 @@
         (doseq [[i ^DriveRequest request] requests]
           (.queue request batch GoogleJsonErrorContainer
                   (reify BatchCallback
-                    (onSuccess [_ http-response headers]
-                      (let [extant (or (nth responses i) [])
-                            items (get http-response "items")
-                            items' (into extant items)]
-                        (assoc! responses i items'))
-                      (when (next-page! request http-response)
-                        (assoc! next-requests i request)))
+                    (onSuccess [_ response headers]
+                      (let [data (response-data request response)]
+                        (if (next-page! request response)
+                          (let [extant (or (nth responses i) [])]
+                            (assoc! next-requests i request)
+                            (assoc! responses i (into extant data)))
+                          (assoc! responses i data))))
                     (onFailure [_ error headers]
                       (assoc! responses i error)))))
         (.execute batch)
@@ -133,14 +179,6 @@
           (when (seq next-requests)
             (recur next-requests)))))
     (persistent! responses)))
-
-(defn execute-batch!
-  "Execute the given queries in a batch, returning a vector of the items of
-   their responses in the same order as the queries. If any queries in a batch
-   yield paginated responses, another batch will be executed for all such
-   queries, iteratively until all pages have been received."
-  [google-ctx queries]
-  (execute-batch*! google-ctx (map (partial build-request google-ctx) queries)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

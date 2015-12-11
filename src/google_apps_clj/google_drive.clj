@@ -41,6 +41,8 @@
     (cast Drive (doto (.build drive-builder)
                   assert))))
 
+;;; Experimental fns operating on query data structures, with support for batching
+
 (t/defalias Query
   '{:type String
     :fields '[Keyword]
@@ -53,6 +55,8 @@
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
 (defn ^DriveRequest build-request
+  "Converts a query map into a stateful request object executable in the
+   given google context"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
         {:keys [type fields]} query
@@ -77,9 +81,12 @@
             (.setFields fields))))))
 
 (defprotocol Requestable
-  (next-page! [_ response]))
+  (next-page!
+   "Mutates the request to retrieve the next page of results if supported and
+    present"
+   [request response]))
 
-(extend-protocol Executable
+(extend-protocol Requestable
   Drive$Files$List
   (next-page! [request ^FileList response]
     (when-let [page-token (.getNextPageToken response)]
@@ -89,6 +96,8 @@
 
 (t/ann execute! [cred/GoogleCtx Query -> (t/Vec t/Any)])
 (defn execute!
+  "Executes the given query in the google context and returns a vector of results.
+   All results are eagerly fetched if paginated."
   [google-ctx query]
   (let [request (build-request google-ctx query)
         results (transient [])]
@@ -104,27 +113,26 @@
   [google-ctx requests]
   (let [credential (cred/build-credential google-ctx)
         batch (BatchRequest. cred/http-transport credential)
-        responses (into [] (repeatedly (count requests) #(transient [])))]
+        responses (transient (into [] (repeat (count requests) nil)))]
     (loop [requests (map-indexed vector requests)]
       (let [next-requests (transient {})]
         (doseq [[i ^DriveRequest request] requests]
           (.queue request batch GoogleJsonErrorContainer
                   (reify BatchCallback
                     (onSuccess [_ http-response headers]
-                      (let [items (get http-response "items")
-                            response (nth responses i)]
-                        (doseq [item items]
-                          (conj! response item)))
+                      (let [extant (or (nth responses i) [])
+                            items (get http-response "items")
+                            items' (into extant items)]
+                        (assoc! responses i items'))
                       (when (next-page! request http-response)
                         (assoc! next-requests i request)))
                     (onFailure [_ error headers]
-                      ;; FIXME do better
-                      (throw (Exception. "sad"))))))
+                      (assoc! responses i error)))))
         (.execute batch)
         (let [next-requests (persistent! next-requests)]
           (when (seq next-requests)
             (recur next-requests)))))
-    (mapv persistent! responses)))
+    (persistent! responses)))
 
 (defn execute-batch!
   "Execute the given queries in a batch, returning a vector of the items of

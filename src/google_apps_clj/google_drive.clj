@@ -10,11 +10,13 @@
                                                    BatchCallback)
            (com.google.api.client.googleapis.json GoogleJsonErrorContainer)
            (com.google.api.client.http FileContent
+                                       InputStreamContent
                                        GenericUrl)
            (com.google.api.client.util GenericData)
            (com.google.api.services.drive Drive
                                           Drive$Builder
                                           Drive$Files$Get
+                                          Drive$Files$Insert
                                           Drive$Files$List
                                           Drive$Files$Update
                                           Drive$Permissions$Delete
@@ -31,7 +33,8 @@
                                                 PermissionId
                                                 PermissionList
                                                 Property
-                                                PropertyList)))
+                                                PropertyList)
+           (java.io InputStream)))
 
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
 
@@ -57,12 +60,28 @@
 
 (t/defalias Request
   (t/U Drive$Files$Get
+       Drive$Files$Insert
        Drive$Files$List
        Drive$Files$Update
        Drive$Permissions$GetIdForEmail
        Drive$Permissions$Insert
        Drive$Permissions$List
        Drive$Permissions$Update))
+
+(defn ^File build-file
+  [query]
+  (let [{:keys [title description writers-can-share?]} query]
+    (cond-> (File.)
+      title (.setTitle title)
+      description (.setDescription description)
+      (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
+
+(defn ^InputStreamContent build-stream
+  [query]
+  (let [{:keys [content type size]} query]
+    (when content
+      (cond-> (InputStreamContent. ^String type (io/input-stream content))
+        size (.setLength ^Long size)))))
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
 (defn ^DriveRequest build-request
@@ -107,12 +126,21 @@
           (cond-> (.get (.files drive) file-id)
             fields (.setFields fields)))
         :update
-        (let [{:keys [file-id title description writers-can-share?]} query
-              file (cond-> (File.)
-                     title (.setTitle title)
-                     description (.setDescription description)
-                     (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))]
-          (cond-> (.update (.files drive) file-id file)
+        (let [{:keys [file-id]} query
+              file (build-file query)
+              stream (build-stream query)
+              request (if stream
+                        (.update (.files drive) file-id file stream)
+                        (.update (.files drive) file-id file))]
+          (cond-> request
+            fields (.setFields fields)))
+        :insert
+        (let [file (build-file query)
+              stream (build-stream query)
+              request (if stream
+                        (.insert (.files drive) file stream)
+                        (.insert (.files drive) file))]
+          (cond-> request
             fields (.setFields fields))))
       :permissions
       (case action
@@ -165,6 +193,11 @@
     (.getItems response))
 
   Drive$Files$Get
+  (next-page! [request response])
+  (response-data [request response]
+    response)
+
+  Drive$Files$Insert
   (next-page! [request response])
   (response-data [request response]
     response)
@@ -255,6 +288,101 @@
           (when (seq next-requests)
             (recur next-requests)))))
     (persistent! responses)))
+
+(defn derive-type
+  [principal]
+  (cond (= "anyone" principal)
+        :anyone
+        (pos? (.indexOf principal "@"))
+        :user ; This seems to work correctly for users and groups
+        :else
+        :domain))
+
+(defn find-extant-permissions
+  [google-ctx file-id principal]
+  (let [list-query {:model :permissions
+                    :action :list
+                    :file-id file-id
+                    :fields [:id :role :withLink :type :domain :emailAddress]}]
+    (->> (execute! google-ctx list-query)
+         (filter (fn [permission]
+                   (condp = (derive-type principal)
+                     :user
+                     (and (= principal (get permission "emailAddress"))
+                          (#{"user" "group"} (get permission "type")))
+                     :domain
+                     (and (= principal (get permission "domain"))
+                          (= "domain" (get permission "type")))
+                     :anyone
+                     (and (= "anyone" (get permission "type")))))))))
+
+(defn assign!
+  "Authorize the principal with the role on the given file. The principal will
+   not be able to discover the file via google unless the searchable? field is
+   true. The principal may be the literal \"anyone\", an email address of a
+   user or google app group, or a google app domain.
+
+   If the principal has any other permissions, they will be deleted. If the
+   principal has permission for this authorization already, it will be left
+   intact, otherwise a new permission will be inserted.
+
+   This operation should be idempotent until the the permissions change by some
+   other operation."
+  [google-ctx authorization]
+  (let [{:keys [file-id principal role searchable?]} authorization
+        extant (find-extant-permissions google-ctx file-id principal)
+        found (atom false) ; TODO this could be a volatile
+        ids-to-delete (transient [])]
+    ;; [principal withLink] seem to be a unique key within a file
+    (doseq [permission extant]
+      (if (and (= (name role) (get permission "role"))
+               (case searchable?
+                 true (true? (get permission "withLink"))
+                 false (nil? (get permission "withLink"))))
+        (reset! found true)
+        (conj! ids-to-delete (get permission "id"))))
+    (let [delete-requests (mapv (fn [id] {:model :permissions
+                                          :action :delete
+                                          :file-id file-id
+                                          :permission-id id})
+                                (persistent! ids-to-delete))
+          insert-request (when-not @found
+                           {:model :permissions
+                            :action :insert
+                            :file-id file-id
+                            :value principal
+                            :role role
+                            :type (derive-type principal)
+                            :with-link? searchable?
+                            :fields [:id]})
+          requests (cond-> delete-requests
+                     insert-request (conj insert-request))]
+      (when (seq requests)
+        (if (= 1 (count requests))
+          (execute! google-ctx (first requests))
+          (execute-batch! google-ctx requests))))
+    nil))
+
+(defn revoke!
+  "Revoke all permissions for the given principal on the given file. The
+   principal may be the literal \"anyone\", an email address of a user or
+   google app group, or a google app domain.
+
+   This operation should be idempotent until the the permissions change by some
+   other operation."
+  [google-ctx deauthorization]
+  (let [{:keys [file-id principal]} deauthorization
+        extant (find-extant-permissions google-ctx file-id principal)
+        requests (mapv (fn [permission]
+                         {:model :permissions
+                          :action :delete
+                          :file-id file-id
+                          :permission-id (get permission "id")})
+                       extant)]
+    (when (seq requests)
+      (if (= 1 (count requests))
+        (execute! google-ctx (first requests))
+        (execute-batch! google-ctx requests)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

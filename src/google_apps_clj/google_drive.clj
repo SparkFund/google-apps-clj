@@ -17,8 +17,11 @@
                                           Drive$Files$Get
                                           Drive$Files$List
                                           Drive$Files$Update
+                                          Drive$Permissions$Delete
+                                          Drive$Permissions$GetIdForEmail
                                           Drive$Permissions$Insert
                                           Drive$Permissions$List
+                                          Drive$Permissions$Update
                                           DriveRequest
                                           DriveScopes)
            (com.google.api.services.drive.model File
@@ -53,10 +56,13 @@
     :file-id (t/Maybe String)})
 
 (t/defalias Request
-  (t/U Drive$Files$List
-       Drive$Files$Get
+  (t/U Drive$Files$Get
+       Drive$Files$List
+       Drive$Files$Update
+       Drive$Permissions$GetIdForEmail
        Drive$Permissions$Insert
-       Drive$Permissions$List))
+       Drive$Permissions$List
+       Drive$Permissions$Update))
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
 (defn ^DriveRequest build-request
@@ -65,14 +71,13 @@
    fields:
 
    :model - :files, :permissions
-   :action - :list, :get, :update, :insert
+   :action - :list, :get, :update, :insert, :delete
 
    Other fields may be given, and may be required by the action and model:
 
    :fields - a seq of keywords specifying the object projection
    :query - used to constrain a list of files
-   :file-id - specifies the file for file-specific models and actions
-   :updates - provides the attributes of the object to change"
+   :file-id - specifies the file for file-specific models and actions"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
         {:keys [model action fields]} query
@@ -102,11 +107,11 @@
           (cond-> (.get (.files drive) file-id)
             fields (.setFields fields)))
         :update
-        (let [{:keys [file-id updates]} query
-              {:keys [title description]} updates
+        (let [{:keys [file-id title description writers-can-share?]} query
               file (cond-> (File.)
                      title (.setTitle title)
-                     description (.setDescription description))]
+                     description (.setDescription description)
+                     (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))]
           (cond-> (.update (.files drive) file-id file)
             fields (.setFields fields))))
       :permissions
@@ -116,16 +121,31 @@
           (cond-> (.list (.permissions drive) file-id)
             fields (.setFields fields)))
         :insert
-        (let [{:keys [file-id value role type with-link]} query
+        (let [{:keys [file-id value role type with-link?]} query
               permission (-> (Permission.)
                              (.setRole (name role))
                              (.setType (name type))
                              (.setValue value)
-                             (cond-> (not (nil? with-link))
-                               (.setWithLink with-link)))]
+                             (cond-> (not (nil? with-link?))
+                               (.setWithLink with-link?)))]
           (-> (.insert (.permissions drive) file-id permission)
               (.setSendNotificationEmails false)
-              (cond-> fields (.setFields fields))))))))
+              (cond-> fields (.setFields fields))))
+        ;; TODO this is of debatable utility since it doesn't work for domain or
+        ;; anyone principals, and the id has no stability guarantee anyway
+        :get-id-for-email
+        (let [{:keys [email]} query]
+          (.getIdForEmail (.permissions drive) email))
+        :update
+        (let [{:keys [file-id permission-id role transfer-ownership?]} query
+              permission (-> (Permission.)
+                             (.setRole role))]
+          (cond-> (.update (.permissions drive) file-id permission-id permission)
+            (not (nil? transfer-ownership?)) (.setTransferOwnership transfer-ownership?)
+            fields (.setFields fields)))
+        :delete
+        (let [{:keys [file-id permission-id]} query]
+          (-> (.delete (.permissions drive) file-id permission-id)))))))
 
 (defprotocol Requestable
   (response-data
@@ -146,12 +166,27 @@
 
   Drive$Files$Get
   (next-page! [request response])
-  (response-data [request ^File response]
+  (response-data [request response]
     response)
 
   Drive$Files$Update
   (next-page! [request response])
-  (response-data [request ^File response]
+  (response-data [request response]
+    response)
+
+  Drive$Permissions$Delete
+  (next-page! [request response])
+  (response-data [request response]
+    response)
+
+  Drive$Permissions$GetIdForEmail
+  (next-page! [request response])
+  (response-data [request response]
+    response)
+
+  Drive$Permissions$Insert
+  (next-page! [request response])
+  (response-data [request response]
     response)
 
   Drive$Permissions$List
@@ -159,10 +194,12 @@
   (response-data [request ^PermissionList response]
     (.getItems response))
 
-  Drive$Permissions$Insert
+  Drive$Permissions$Update
   (next-page! [request response])
   (response-data [request response]
-    response))
+    response)
+
+  )
 
 (defn execute!
   "Executes the given query in the google context and returns the results.

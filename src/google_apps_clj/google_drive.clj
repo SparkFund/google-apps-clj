@@ -234,7 +234,7 @@
 
   )
 
-(defn execute!
+(defn execute-query!
   "Executes the given query in the google context and returns the results.
    If the response is paginated, all results are fetched and concatenated
    into a vector."
@@ -289,6 +289,14 @@
             (recur next-requests)))))
     (persistent! responses)))
 
+(defn execute!
+  "Executes the given queries in the most efficient way"
+  [google-ctx queries]
+  (when (seq queries)
+    (if (= 1 (count queries))
+      [(execute-query! google-ctx (first queries))]
+      (execute-batch! google-ctx queries))))
+
 (defn derive-type
   [principal]
   (cond (= "anyone" principal)
@@ -304,7 +312,7 @@
                     :action :list
                     :file-id file-id
                     :fields [:id :role :withLink :type :domain :emailAddress]}]
-    (->> (execute! google-ctx list-query)
+    (->> (execute-query! google-ctx list-query)
          (filter (fn [permission]
                    (condp = (derive-type principal)
                      :user
@@ -341,26 +349,23 @@
                  false (nil? (get permission "withLink"))))
         (reset! found true)
         (conj! ids-to-delete (get permission "id"))))
-    (let [delete-requests (mapv (fn [id] {:model :permissions
-                                          :action :delete
-                                          :file-id file-id
-                                          :permission-id id})
-                                (persistent! ids-to-delete))
-          insert-request (when-not @found
-                           {:model :permissions
-                            :action :insert
-                            :file-id file-id
-                            :value principal
-                            :role role
-                            :type (derive-type principal)
-                            :with-link? searchable?
-                            :fields [:id]})
-          requests (cond-> delete-requests
-                     insert-request (conj insert-request))]
-      (when (seq requests)
-        (if (= 1 (count requests))
-          (execute! google-ctx (first requests))
-          (execute-batch! google-ctx requests))))
+    (let [deletes (mapv (fn [id] {:model :permissions
+                                  :action :delete
+                                  :file-id file-id
+                                  :permission-id id})
+                        (persistent! ids-to-delete))
+          insert (when-not @found
+                   {:model :permissions
+                    :action :insert
+                    :file-id file-id
+                    :value principal
+                    :role role
+                    :type (derive-type principal)
+                    :with-link? searchable?
+                    :fields [:id]})
+          queries (cond-> deletes
+                    insert (conj insert))]
+      (execute! google-ctx queries))
     nil))
 
 (defn revoke!
@@ -373,16 +378,14 @@
   [google-ctx deauthorization]
   (let [{:keys [file-id principal]} deauthorization
         extant (find-extant-permissions google-ctx file-id principal)
-        requests (mapv (fn [permission]
-                         {:model :permissions
-                          :action :delete
-                          :file-id file-id
-                          :permission-id (get permission "id")})
-                       extant)]
-    (when (seq requests)
-      (if (= 1 (count requests))
-        (execute! google-ctx (first requests))
-        (execute-batch! google-ctx requests)))))
+        deletes (mapv (fn [permission]
+                        {:model :permissions
+                         :action :delete
+                         :file-id file-id
+                         :permission-id (get permission "id")})
+                      extant)]
+    (execute! google-ctx deletes)
+    nil))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

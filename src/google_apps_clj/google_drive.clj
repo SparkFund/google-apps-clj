@@ -17,6 +17,7 @@
                                           Drive$Files$Get
                                           Drive$Files$List
                                           Drive$Files$Update
+                                          Drive$Permissions$Insert
                                           Drive$Permissions$List
                                           DriveRequest
                                           DriveScopes)
@@ -54,6 +55,7 @@
 (t/defalias Request
   (t/U Drive$Files$List
        Drive$Files$Get
+       Drive$Permissions$Insert
        Drive$Permissions$List))
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
@@ -62,22 +64,23 @@
    given google context. Queries are maps with the following required
    fields:
 
-   :type - :files, :permissions
-   :action - :list, :get, :update
+   :model - :files, :permissions
+   :action - :list, :get, :update, :insert
 
-   Other fields may be given, and may be required by the action and type:
+   Other fields may be given, and may be required by the action and model:
 
    :fields - a seq of keywords specifying the object projection
    :query - used to constrain a list of files
-   :file-id - specifies the file for file-specific types and actions
+   :file-id - specifies the file for file-specific models and actions
    :updates - provides the attributes of the object to change"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
-        {:keys [type action fields]} query
+        {:keys [model action fields]} query
+        ;; TODO more rigorous support for nesting, e.g. permissions(role,type)
         fields (when (seq fields) (string/join "," (map name fields)))
         items? (= :list action)
         fields-seq (cond-> []
-                     (and items? (= type :files))
+                     (and items? (= model :files))
                      (conj "nextPageToken")
                      (and items? fields)
                      (conj (format "items(%s)" fields))
@@ -86,7 +89,7 @@
                      (and (not items?) fields)
                      (conj fields))
         fields (when (seq fields-seq) (string/join "," fields-seq))]
-    (case type
+    (case model
       :files
       (case action
         :list
@@ -111,7 +114,18 @@
         :list
         (let [{:keys [file-id]} query]
           (cond-> (.list (.permissions drive) file-id)
-            fields (.setFields fields)))))))
+            fields (.setFields fields)))
+        :insert
+        (let [{:keys [file-id value role type with-link]} query
+              permission (-> (Permission.)
+                             (.setRole (name role))
+                             (.setType (name type))
+                             (.setValue value)
+                             (cond-> (not (nil? with-link))
+                               (.setWithLink with-link)))]
+          (-> (.insert (.permissions drive) file-id permission)
+              (.setSendNotificationEmails false)
+              (cond-> fields (.setFields fields))))))))
 
 (defprotocol Requestable
   (response-data
@@ -143,7 +157,12 @@
   Drive$Permissions$List
   (next-page! [request response])
   (response-data [request ^PermissionList response]
-    (.getItems response)))
+    (.getItems response))
+
+  Drive$Permissions$Insert
+  (next-page! [request response])
+  (response-data [request response]
+    response))
 
 (defn execute!
   "Executes the given query in the google context and returns the results.
@@ -173,6 +192,7 @@
    queries, iteratively until all pages have been received, and the
    results concatenated into vectors as in execute!."
   [google-ctx queries]
+  ;; TODO partition queries into batches of 1000
   (let [requests (map (partial build-request google-ctx) queries)
         credential (cred/build-credential google-ctx)
         batch (BatchRequest. cred/http-transport credential)

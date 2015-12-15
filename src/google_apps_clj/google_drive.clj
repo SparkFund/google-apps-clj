@@ -27,13 +27,15 @@
                                           DriveRequest
                                           DriveScopes)
            (com.google.api.services.drive.model File
+                                                File$Labels
                                                 FileList
                                                 ParentReference
                                                 Permission
                                                 PermissionId
                                                 PermissionList
                                                 Property
-                                                PropertyList)
+                                                PropertyList
+                                                User)
            (java.io InputStream)))
 
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
@@ -68,7 +70,7 @@
        Drive$Permissions$List
        Drive$Permissions$Update))
 
-(defn ^File build-file
+(defn- ^File build-file
   [query]
   (let [{:keys [title description writers-can-share?]} query]
     (cond-> (File.)
@@ -76,7 +78,7 @@
       description (.setDescription description)
       (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
 
-(defn ^InputStreamContent build-stream
+(defn- ^InputStreamContent build-stream
   [query]
   (let [{:keys [content type size]} query]
     (when content
@@ -84,7 +86,7 @@
         size (.setLength ^Long size)))))
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
-(defn ^DriveRequest build-request
+(defn- ^DriveRequest build-request
   "Converts a query into a stateful request object executable in the
    given google context. Queries are maps with the following required
    fields:
@@ -92,7 +94,8 @@
    :model - :files, :permissions
    :action - :list, :get, :update, :insert, :delete
 
-   Other fields may be given, and may be required by the action and model:
+   Other fields may be given, and may be required by the action and model.
+   These may include:
 
    :fields - a seq of keywords specifying the object projection
    :query - used to constrain a list of files
@@ -175,7 +178,7 @@
         (let [{:keys [file-id permission-id]} query]
           (-> (.delete (.permissions drive) file-id permission-id)))))))
 
-(defprotocol Requestable
+(defprotocol Request
   (response-data
    [request response]
    "Extracts the good bit from the response")
@@ -184,7 +187,7 @@
    "Mutates the request to retrieve the next page of results if supported and
     present"))
 
-(extend-protocol Requestable
+(extend-protocol Request
   Drive$Files$List
   (next-page! [request ^FileList response]
     (when-let [page-token (.getNextPageToken response)]
@@ -230,21 +233,72 @@
   Drive$Permissions$Update
   (next-page! [request response])
   (response-data [request response]
-    response)
+    response))
 
-  )
+;; TODO perhaps validate the codomain is a subset of the keyword domain
+(defn- camel->kebab
+  [camel]
+  (let [accum (StringBuffer.)]
+    (loop [[c & cs] camel]
+      (if (not c)
+        (.toString accum)
+        (let [c' (Character/toLowerCase c)]
+          (when-not (= c' c)
+            (.append accum \-))
+          (.append accum c')
+          (recur cs))))
+    (.toString accum)))
+
+(defn- convert-bean
+  [bean]
+  (->> (keys bean)
+       (map (juxt (comp keyword camel->kebab) (partial get bean)))
+       (into {})))
+
+(defprotocol Response
+  (convert-response
+   [_]
+   "Convert the google response object into a clojure form"))
+
+(extend-protocol Response
+  java.util.List
+  (convert-response [l]
+    (mapv convert-response l))
+  com.google.api.client.json.GenericJson
+  (convert-response [m]
+    (->> (keys m)
+         (map (fn [field]
+                (let [value (convert-response (get m field))
+                      field (if-not (true? value)
+                              (-> field camel->kebab keyword)
+                              (-> field camel->kebab (str "?") keyword))]
+                  [field value])))
+         (into {})))
+  com.google.api.client.util.DateTime
+  (convert-response [dt]
+    ;; TODO convert to inst or jodatime
+    dt)
+  java.lang.String
+  (convert-response [s]
+    s)
+  java.lang.Long
+  (convert-response [l]
+    l)
+  java.lang.Boolean
+  (convert-response [b]
+    b))
 
 (defn execute-query!
-  "Executes the given query in the google context and returns the results.
-   If the response is paginated, all results are fetched and concatenated
-   into a vector."
+  "Executes the given query in the google context and returns the
+   results converted into clojure forms. If the response is paginated,
+   all results are fetched and concatenated into a vector."
   [google-ctx query]
   (let [request (build-request google-ctx query)
         results (atom nil)]
-    ; TODO the results could be a volatile in clojure 1.7
+    ;; TODO the results could be a volatile in clojure 1.7
     (loop []
       (let [response (.execute request)
-            data (response-data request response)]
+            data (convert-response (response-data request response))]
         (if (next-page! request response)
           (do
             (swap! results (fn [extant] (into (or extant []) data)))
@@ -256,11 +310,12 @@
     @results))
 
 (defn execute-batch!
-  "Execute the given queries in a batch, returning their responses in
-   the same order as the queries. If any queries in a batch yield
-   paginated responses, another batch will be executed for all such
-   queries, iteratively until all pages have been received, and the
-   results concatenated into vectors as in execute!."
+  "Execute the given queries in a batch, returning their responses,
+   converted into clojure forms, in the same order as the queries. If
+   any queries in a batch yield paginated responses, another batch will
+   be executed for all such queries, iteratively until all pages have
+   been received, and the results concatenated into vectors as in
+   execute!."
   [google-ctx queries]
   ;; TODO partition queries into batches of 1000
   (let [requests (map (partial build-request google-ctx) queries)
@@ -273,7 +328,7 @@
           (.queue request batch GoogleJsonErrorContainer
                   (reify BatchCallback
                     (onSuccess [_ response headers]
-                      (let [data (response-data request response)
+                      (let [data (convert-response (response-data request response))
                             extant (nth responses i)]
                         (if (next-page! request response)
                           (let [response (into (or extant []) data)]
@@ -290,14 +345,15 @@
     (persistent! responses)))
 
 (defn execute!
-  "Executes the given queries in the most efficient way"
+  "Executes the given queries in the most efficient way, returning their
+   results in a seq of clojure forms."
   [google-ctx queries]
   (when (seq queries)
     (if (= 1 (count queries))
       [(execute-query! google-ctx (first queries))]
       (execute-batch! google-ctx queries))))
 
-(defn derive-type
+(defn- derive-type
   [principal]
   (cond (= "anyone" principal)
         :anyone
@@ -306,7 +362,7 @@
         :else
         :domain))
 
-(defn find-extant-permissions
+(defn- find-extant-permissions
   [google-ctx file-id principal]
   (let [list-query {:model :permissions
                     :action :list
@@ -386,6 +442,59 @@
                       extant)]
     (execute! google-ctx deletes)
     nil))
+
+;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns
+
+(defn all-files
+  [google-ctx]
+  (let [fields [:id :title :writersCanShare :mimeType
+                "permissions(emailAddress,type,domain,role,withLink)"
+                "owners(emailAddress)"
+                "parents(id)"]
+        query {:model :files
+               :action :list
+               :fields fields
+               :query "trashed=false"}]
+    (execute-query! google-ctx query)))
+
+(defn parent-ids
+  [file]
+  (into #{} (map :id (:parents file))))
+
+(defn folder?
+  [file]
+  (= "application/vnd.google-apps.folder" (:mime-type file)))
+
+(defn resolve-path
+  [folder path])
+
+;; abandoned files belong to folders not in our corpus
+;; orphaned files do not belong to any folders
+;; index looks up a file by id
+;; children looks up child files by parent id
+(defn file-tree
+  [files]
+  (let [index (->> files
+                   (map (juxt :id identity))
+                   (into {}))]
+    (reduce (fn [accum file]
+              (let [parent-ids (parent-ids file)]
+                (if (seq parent-ids)
+                  (reduce (fn [accum parent-id]
+                            (-> accum
+                                (update-in [:children parent-id]
+                                           (fnil conj []) file)
+                                (cond-> (not (index parent-id))
+                                  (update-in [:abandoned]
+                                             (fnil conj []) file))))
+                          accum
+                          parent-ids)
+                  (update-in accum [:orphans] (fnil conj []) file))))
+            {:index index}
+            files)))
+
+;;; Everything hereafter should probably be rewritten in terms of the above
+;;; fns, though some response types will change if we do
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;

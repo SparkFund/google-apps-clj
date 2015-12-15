@@ -8,7 +8,8 @@
             [google-apps-clj.credentials :as cred])
   (:import (com.google.api.client.googleapis.batch BatchRequest
                                                    BatchCallback)
-           (com.google.api.client.googleapis.json GoogleJsonErrorContainer)
+           (com.google.api.client.googleapis.json GoogleJsonErrorContainer
+                                                  GoogleJsonResponseException)
            (com.google.api.client.http FileContent
                                        InputStreamContent
                                        GenericUrl)
@@ -72,10 +73,14 @@
 
 (defn- ^File build-file
   [query]
-  (let [{:keys [title description writers-can-share?]} query]
+  (let [{:keys [description mime-type parent-ids title writers-can-share?]} query]
     (cond-> (File.)
-      title (.setTitle title)
       description (.setDescription description)
+      mime-type (.setMimeType mime-type)
+      (seq parent-ids) (.setParents (map (fn [id] (-> (ParentReference.)
+                                                      (.setId id)))
+                                         parent-ids))
+      title (.setTitle title)
       (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
 
 (defn- ^InputStreamContent build-stream
@@ -264,6 +269,9 @@
   java.util.List
   (convert-response [l]
     (mapv convert-response l))
+  com.google.api.client.util.ArrayMap
+  (convert-response [m]
+    m)
   com.google.api.client.json.GenericJson
   (convert-response [m]
     (->> (keys m)
@@ -443,6 +451,32 @@
     (execute! google-ctx deletes)
     nil))
 
+(defn create-folder!
+  "Create a folder with the given title in the given parent folder"
+  [google-ctx parent-id title]
+  (let [query {:model :files
+               :action :insert
+               :parent-ids [parent-id]
+               :mime-type folder-mime-type
+               :title title}]
+    (execute-query! google-ctx query)))
+
+(defn move-file!
+  "Moves a file to a folder. This returns true if successful, false
+   if forbidden, and raises otherwise."
+  [google-ctx folder-id file-id]
+  (let [query {:model :files
+               :action :update
+               :parent-ids [folder-id]
+               :file-id file-id}]
+    (try
+      (execute-query! google-ctx query)
+      true
+      (catch GoogleJsonResponseException e
+        (when (not= 400 (.getStatusCode e))
+          (throw e))
+        false))))
+
 ;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns
 
 (defn all-files
@@ -461,9 +495,12 @@
   [file]
   (into #{} (map :id (:parents file))))
 
+(def folder-mime-type
+  "application/vnd.google-apps.folder")
+
 (defn folder?
   [file]
-  (= "application/vnd.google-apps.folder" (:mime-type file)))
+  (= folder-mime-type (:mime-type file)))
 
 (defn resolve-path
   [folder path])

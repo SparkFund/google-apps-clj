@@ -363,6 +363,7 @@
         batch (BatchRequest. cred/http-transport credential)
         responses (atom (into [] (repeat (count requests) nil)))]
     (loop [requests (map-indexed vector requests)]
+      (prn "batch executing" (count requests))
       (let [next-requests (atom {})]
         (doseq [[i ^DriveRequest request] requests]
           (.queue request batch GoogleJsonErrorContainer
@@ -417,6 +418,15 @@
         :else
         :domain))
 
+(defn- derive-principal
+  [permission]
+  (let [{:keys [type email-address domain]} permission]
+    (case type
+      "anyone" "anyone"
+      "domain" domain
+      "group" email-address
+      "user" email-address)))
+
 (defn get-permissions!
   "Returns the permissions granted on the given file, filtered for those
    explicitly granted to the principal if given"
@@ -438,6 +448,17 @@
                                   (= "domain" (:type permission)))
                              :anyone
                              (and (= "anyone" (:type permission))))))))))
+
+(defn summarize-permissions
+  "Returns a map of the sets of principals in the given permissions grouped by
+   role"
+  [permissions]
+  (reduce (fn [accum permission]
+            (let [{:keys [role]} permission]
+              (update-in accum [role] (fnil conj #{})
+                         (derive-principal permission))))
+          {}
+          permissions))
 
 (defn assign!
   "Authorize the principal with the role on the given file. The principal will
@@ -621,8 +642,27 @@
   [file]
   (= folder-mime-type (:mime-type file)))
 
-(defn resolve-path
-  [folder path])
+(defn resolve-file-id!
+  [google-ctx path]
+  (when (seq path)
+    (loop [folder-id "root"
+           [title & path'] path]
+      (let [q (format "'%s' in parents and title = '%s'" folder-id title)
+            query {:model :files
+                   :action :list
+                   :fields [:id]
+                   :query q}
+            results (execute-query! google-ctx query)
+            total (count results)]
+        (when (seq results)
+          (when (seq (rest results))
+            (let [msg (format "Can't resolve path %s, too many matches for %s"
+                              (pr-str path) title)]
+              (throw (IllegalStateException. msg))))
+          (let [id (:id (first results))]
+            (if (seq path')
+              (recur id path')
+              id)))))))
 
 ;; abandoned files belong to folders not in our corpus
 ;; orphaned files do not belong to any folders
@@ -666,7 +706,8 @@
                     :index {}})]
     (loop [folder-ids [folder-id]]
       (when (seq folder-ids)
-        (let [responses (execute! creds (map list-files folder-ids))]
+        (let [batches (partition-all 100 (map list-files folder-ids))
+              responses (mapcat (partial execute! creds) batches)]
           (doseq [[folder-id files] (map vector folder-ids responses)]
             (swap! tree (fn [tree]
                           (reduce (fn [accum file]

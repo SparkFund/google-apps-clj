@@ -8,7 +8,9 @@
             [google-apps-clj.credentials :as cred])
   (:import (com.google.api.client.googleapis.batch BatchRequest
                                                    BatchCallback)
-           (com.google.api.client.googleapis.json GoogleJsonErrorContainer
+           (com.google.api.client.googleapis.json GoogleJsonError
+                                                  GoogleJsonError$ErrorInfo
+                                                  GoogleJsonErrorContainer
                                                   GoogleJsonResponseException)
            (com.google.api.client.http FileContent
                                        InputStreamContent
@@ -310,6 +312,17 @@
   nil
   (convert-response [_]))
 
+(defn- rate-limit-exceeded?
+  [^GoogleJsonError error]
+  (and (= 403 (.getCode error))
+       (some (fn [^GoogleJsonError$ErrorInfo error]
+               (let [reason (.getReason error)]
+                 (case reason
+                   "rateLimitExceeded" true
+                   "userRateLimitExceeded" true
+                   false)))
+             (.getErrors error))))
+
 (defn execute-query!
   "Executes the given query in the google context and returns the
    results converted into clojure forms. If the response is paginated,
@@ -337,34 +350,52 @@
    any queries in a batch yield paginated responses, another batch will
    be executed for all such queries, iteratively until all pages have
    been received, and the results concatenated into vectors as in
-   execute!."
+   execute!.
+
+   Queries that yield error results due to rate limits are retried
+   after sleeping up to 200ms. This sleep is cumulative for the batch.
+   There is no limit on the number of rate limit retries. All other
+   errors are given as GoogleJsonError objects in the responses."
   [google-ctx queries]
   ;; TODO partition queries into batches of 1000
   (let [requests (map (partial build-request google-ctx) queries)
         credential (cred/build-credential google-ctx)
         batch (BatchRequest. cred/http-transport credential)
-        responses (transient (into [] (repeat (count requests) nil)))]
+        responses (atom (into [] (repeat (count requests) nil)))]
     (loop [requests (map-indexed vector requests)]
-      (let [next-requests (transient {})]
+      (let [next-requests (atom {})]
         (doseq [[i ^DriveRequest request] requests]
           (.queue request batch GoogleJsonErrorContainer
                   (reify BatchCallback
                     (onSuccess [_ response headers]
-                      (let [data (convert-response (response-data request response))
-                            extant (nth responses i)]
+                      (let [data (convert-response (response-data request response))]
                         (if (next-page! request response)
-                          (let [response (into (or extant []) data)]
-                            (assoc! next-requests i request)
-                            (assoc! responses i response))
-                          (let [response (if extant (into extant data) data)]
-                            (assoc! responses i response)))))
-                    (onFailure [_ error headers]
-                      (assoc! responses i error)))))
+                          (do
+                            (swap! next-requests assoc i request)
+                            (swap! responses
+                                   (fn [responses]
+                                     (let [extant (nth responses i)
+                                           response (into (or extant []) data)]
+                                       (assoc responses i response)))))
+                          (swap! responses
+                                 (fn [responses]
+                                   (let [extant (nth responses i)
+                                         response (if extant
+                                                    (into extant data)
+                                                    data)]
+                                     (assoc responses i response)))))))
+                    (onFailure [_ container headers]
+                      (let [error (.getError ^GoogleJsonErrorContainer container)]
+                        (if (rate-limit-exceeded? error)
+                          (do
+                            (Thread/sleep (+ 100 (rand-int 100)))
+                            (swap! next-requests assoc i request))
+                          (swap! responses assoc i error)))))))
         (.execute batch)
-        (let [next-requests (persistent! next-requests)]
+        (let [next-requests @next-requests]
           (when (seq next-requests)
             (recur next-requests)))))
-    (persistent! responses)))
+    @responses))
 
 (defn execute!
   "Executes the given queries in the most efficient way, returning their
@@ -617,6 +648,33 @@
                   (update-in accum [:orphans] (fnil conj []) file))))
             {:index index}
             files)))
+
+(defn folder-seq
+  [tree folder-id]
+  (let [{:keys [index children]} tree]
+    (tree-seq folder?
+              (comp children :id)
+              (index folder-id))))
+
+(defn rfolder-tree!
+  [creds folder-id]
+  (let [fields [:id :title :writersCanShare :mimeType
+                "permissions(emailAddress,type,domain,role,withLink)"
+                "owners(emailAddress)"]
+        list-files #(-> % list-files (with-fields fields))
+        tree (atom {:children {}
+                    :index {}})]
+    (loop [folder-ids [folder-id]]
+      (when (seq folder-ids)
+        (let [responses (execute! creds (map list-files folder-ids))]
+          (doseq [[folder-id files] (map vector folder-ids responses)]
+            (swap! tree (fn [tree]
+                          (reduce (fn [accum file]
+                                    (assoc-in accum [:index (:id file)] file))
+                                  (assoc-in tree [:children folder-id] files)
+                                  files))))
+          (recur (map :id (filter folder? (apply concat responses)))))))
+    @tree))
 
 ;;; Everything hereafter should probably be rewritten in terms of the above
 ;;; fns, though some response types will change if we do

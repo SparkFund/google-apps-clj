@@ -27,6 +27,8 @@
           (is (= "test-title" (:title file')))
           (is (= "test-description" (:description file')))
           (is (= "text/plain" (:mime-type file'))))
+        (let [files (list-files! creds folder-id)]
+          (is (= [file-id] (map :id files))))
         (delete-file! creds file-id))
       (finally
         (delete-file! creds folder-id)))))

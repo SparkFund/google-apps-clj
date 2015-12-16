@@ -20,7 +20,7 @@
         (is (= folder-name (:title folder)))
         (is (folder? folder)))
       (testing "uploads a file"
-        (let [file (execute-query! creds upload-request)
+        (let [file (q! upload-request)
               file-id (:id file)]
           (is file-id)
           (is (= "test-title" (:title file)))
@@ -35,24 +35,24 @@
           (delete-file! creds file-id)))
       (testing "file permissions"
         (testing "in an unshared folder"
-          (let [folder (q! (-> (get-file folder-id)
-                               (with-fields [:permissions])))
-                {:keys [permissions]} folder]
-            (is (= [["owner" "user"]]
-                   (map (juxt :role :type) permissions)))))
-        (let [file (q! (-> upload-request
-                           (with-fields [:id :permissions])))
-              {:keys [id permissions]} file]
           (is (= [["owner" "user"]]
-                 (map (juxt :role :type) permissions)))
-          (assign! creds {:file-id id
-                          :principal "dev@sparkfund.co"
-                          :role :reader})
-          (let [file (q! (-> (get-file id)
-                             (with-fields [:permissions])))
-                {:keys [permissions]} file]
+                 (map (juxt :role :type) (get-permissions! creds folder-id)))))
+        (let [file-id (:id (q! upload-request))]
+          (testing "newly created files have only the owner permission"
+            (is (= [["owner" "user"]]
+                   (map (juxt :role :type) (get-permissions! creds file-id)))))
+          (testing "managing authorization"
+            (assign! creds file-id {:principal "dev@sparkfund.co"
+                                    :role :reader
+                                    :searchable? false})
             (is (= [["owner" "user"]
                     ["reader" "group"]]
-                   (map (juxt :role :type) permissions))))))
+                   (map (juxt :role :type) (get-permissions! creds file-id))))
+            (assign! creds file-id {:principal "dev@sparkfund.co"
+                                    :role :writer
+                                    :searchable? false})
+            (is (= [["owner" "user"]
+                    ["writer" "group"]]
+                   (map (juxt :role :type) (get-permissions! creds file-id)))))))
       (finally
         (delete-file! creds folder-id)))))

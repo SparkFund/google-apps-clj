@@ -386,23 +386,27 @@
         :else
         :domain))
 
-(defn- find-extant-permissions!
-  [google-ctx file-id principal]
-  (let [list-query {:model :permissions
-                    :action :list
-                    :file-id file-id
-                    :fields [:id :role :withLink :type :domain :emailAddress]}]
-    (->> (execute-query! google-ctx list-query)
-         (filter (fn [permission]
-                   (condp = (derive-type principal)
-                     :user
-                     (and (= principal (get permission "emailAddress"))
-                          (#{"user" "group"} (get permission "type")))
-                     :domain
-                     (and (= principal (get permission "domain"))
-                          (= "domain" (get permission "type")))
-                     :anyone
-                     (and (= "anyone" (get permission "type")))))))))
+(defn get-permissions!
+  "Returns the permissions granted on the given file, filtered for those
+   explicitly granted to the principal if given"
+  ([google-ctx file-id]
+   (get-permissions! google-ctx file-id false))
+  ([google-ctx file-id principal]
+   (let [list-query {:model :permissions
+                     :action :list
+                     :file-id file-id
+                     :fields [:id :role :withLink :type :domain :emailAddress]}]
+     (cond->> (execute-query! google-ctx list-query)
+       principal (filter (fn [permission]
+                           (condp = (derive-type principal)
+                             :user
+                             (and (= principal (:email-address permission))
+                                  (#{"user" "group"} (:type permission)))
+                             :domain
+                             (and (= principal (:domain permission))
+                                  (= "domain" (:type permission)))
+                             :anyone
+                             (and (= "anyone" (:type permission))))))))))
 
 (defn assign!
   "Authorize the principal with the role on the given file. The principal will
@@ -416,24 +420,24 @@
 
    This operation should be idempotent until the the permissions change by some
    other operation."
-  [google-ctx authorization]
-  (let [{:keys [file-id principal role searchable?]} authorization
-        extant (find-extant-permissions! google-ctx file-id principal)
+  [google-ctx file-id authorization]
+  (let [{:keys [principal role searchable?]} authorization
+        extant (get-permissions! google-ctx file-id principal)
         found (atom false) ; TODO this could be a volatile
-        ids-to-delete (transient [])]
+        ids-to-delete (atom [])]
     ;; [principal withLink] seem to be a unique key within a file
     (doseq [permission extant]
-      (if (and (= (name role) (get permission "role"))
+      (if (and (= (name role) (:role permission))
                (case searchable?
-                 true (true? (get permission "withLink"))
-                 false (nil? (get permission "withLink"))))
+                 true (true? (:with-link? permission))
+                 false (nil? (:with-link? permission))))
         (reset! found true)
-        (conj! ids-to-delete (get permission "id"))))
+        (swap! ids-to-delete conj (:id permission))))
     (let [deletes (mapv (fn [id] {:model :permissions
                                   :action :delete
                                   :file-id file-id
                                   :permission-id id})
-                        (persistent! ids-to-delete))
+                        @ids-to-delete)
           insert (when-not @found
                    {:model :permissions
                     :action :insert
@@ -449,15 +453,14 @@
     nil))
 
 (defn revoke!
-  "Revoke all permissions for the given principal on the given file. The
+  "Revoke all authorizations for the given principal on the given file. The
    principal may be the literal \"anyone\", an email address of a user or
    google app group, or a google app domain.
 
    This operation should be idempotent until the the permissions change by some
    other operation."
-  [google-ctx deauthorization]
-  (let [{:keys [file-id principal]} deauthorization
-        extant (find-extant-permissions! google-ctx file-id principal)
+  [google-ctx file-id principal]
+  (let [extant (get-permissions! google-ctx file-id principal)
         deletes (mapv (fn [permission]
                         {:model :permissions
                          :action :delete
@@ -466,6 +469,14 @@
                       extant)]
     (execute! google-ctx deletes)
     nil))
+
+(defn get-authorizations!
+  [google-ctx file-id]
+  (let [request {:model :permissions
+                 :action :list
+                 :file-id file-id
+                 :fields [:emailAddress :type :role :domain]
+                 }]))
 
 (def folder-mime-type
   "application/vnd.google-apps.folder")
@@ -554,6 +565,7 @@
 
 (defn with-fields
   [request fields]
+  "Sets or adds to the set of fields returned by the given request"
   (update-in request [:fields] (fnil into #{}) fields))
 
 ;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns

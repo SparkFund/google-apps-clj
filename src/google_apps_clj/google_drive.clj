@@ -538,6 +538,17 @@
   "Returns a seq of files in the given folder"
   (execute-query! google-ctx (list-files folder-id)))
 
+(defn get-file
+  [file-id]
+  {:model :files
+   :action :get
+   :file-id file-id})
+
+(defn get-file!
+  [google-ctx file-id]
+  "Returns the metadata for the given file"
+  (execute-query! google-ctx (get-file file-id)))
+
 ;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns
 
 (defn all-files

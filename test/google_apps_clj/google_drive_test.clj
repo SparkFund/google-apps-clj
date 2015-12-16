@@ -53,6 +53,9 @@
                                     :searchable? false})
             (is (= [["owner" "user"]
                     ["writer" "group"]]
+                   (map (juxt :role :type) (get-permissions! creds file-id))))
+            (revoke! creds file-id "dev@sparkfund.co")
+            (is (= [["owner" "user"]]
                    (map (juxt :role :type) (get-permissions! creds file-id)))))))
       (finally
         (delete-file! creds folder-id)))))

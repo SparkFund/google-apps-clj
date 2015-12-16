@@ -465,7 +465,7 @@
                         {:model :permissions
                          :action :delete
                          :file-id file-id
-                         :permission-id (get permission "id")})
+                         :permission-id (:id permission)})
                       extant)]
     (execute! google-ctx deletes)
     nil))

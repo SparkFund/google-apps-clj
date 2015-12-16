@@ -16,6 +16,7 @@
            (com.google.api.client.util GenericData)
            (com.google.api.services.drive Drive
                                           Drive$Builder
+                                          Drive$Files$Delete
                                           Drive$Files$Get
                                           Drive$Files$Insert
                                           Drive$Files$List
@@ -62,10 +63,12 @@
     :file-id (t/Maybe String)})
 
 (t/defalias Request
-  (t/U Drive$Files$Get
+  (t/U Drive$Files$Delete
+       Drive$Files$Get
        Drive$Files$Insert
        Drive$Files$List
        Drive$Files$Update
+       Drive$Permissions$Delete
        Drive$Permissions$GetIdForEmail
        Drive$Permissions$Insert
        Drive$Permissions$List
@@ -124,6 +127,9 @@
     (case model
       :files
       (case action
+        :delete
+        (let [{:keys [file-id]} query]
+          (.delete (.files drive) file-id))
         :list
         (let [{:keys [query]} query]
           (cond-> (.list (.files drive))
@@ -146,7 +152,8 @@
         (let [file (build-file query)
               stream (build-stream query)
               request (if stream
-                        (.insert (.files drive) file stream)
+                        (-> (.insert (.files drive) file stream)
+                            (.setConvert true))
                         (.insert (.files drive) file))]
           (cond-> request
             fields (.setFields fields))))
@@ -193,12 +200,10 @@
     present"))
 
 (extend-protocol Request
-  Drive$Files$List
-  (next-page! [request ^FileList response]
-    (when-let [page-token (.getNextPageToken response)]
-      (.setPageToken request page-token)))
-  (response-data [request ^FileList response]
-    (.getItems response))
+  Drive$Files$Delete
+  (next-page! [request response])
+  (response-data [request response]
+    response)
 
   Drive$Files$Get
   (next-page! [request response])
@@ -209,6 +214,13 @@
   (next-page! [request response])
   (response-data [request response]
     response)
+
+  Drive$Files$List
+  (next-page! [request ^FileList response]
+    (when-let [page-token (.getNextPageToken response)]
+      (.setPageToken request page-token)))
+  (response-data [request ^FileList response]
+    (.getItems response))
 
   Drive$Files$Update
   (next-page! [request response])
@@ -294,7 +306,9 @@
     l)
   java.lang.Boolean
   (convert-response [b]
-    b))
+    b)
+  nil
+  (convert-response [_]))
 
 (defn execute-query!
   "Executes the given query in the google context and returns the
@@ -361,6 +375,8 @@
       [(execute-query! google-ctx (first queries))]
       (execute-batch! google-ctx queries))))
 
+;;;; Commands and their helpers
+
 (defn- derive-type
   [principal]
   (cond (= "anyone" principal)
@@ -370,7 +386,7 @@
         :else
         :domain))
 
-(defn- find-extant-permissions
+(defn- find-extant-permissions!
   [google-ctx file-id principal]
   (let [list-query {:model :permissions
                     :action :list
@@ -402,7 +418,7 @@
    other operation."
   [google-ctx authorization]
   (let [{:keys [file-id principal role searchable?]} authorization
-        extant (find-extant-permissions google-ctx file-id principal)
+        extant (find-extant-permissions! google-ctx file-id principal)
         found (atom false) ; TODO this could be a volatile
         ids-to-delete (transient [])]
     ;; [principal withLink] seem to be a unique key within a file
@@ -451,31 +467,76 @@
     (execute! google-ctx deletes)
     nil))
 
+(defn create-folder
+  [parent-id title]
+  {:model :files
+   :action :insert
+   :parent-ids [parent-id]
+   :mime-type folder-mime-type
+   :title title})
+
 (defn create-folder!
   "Create a folder with the given title in the given parent folder"
   [google-ctx parent-id title]
-  (let [query {:model :files
-               :action :insert
-               :parent-ids [parent-id]
-               :mime-type folder-mime-type
-               :title title}]
-    (execute-query! google-ctx query)))
+  (execute-query! google-ctx (create-folder parent-id title)))
+
+(defn move-file
+  [folder-id file-id]
+  {:model :files
+   :action :update
+   :parent-ids [folder-id]
+   :file-id file-id})
 
 (defn move-file!
   "Moves a file to a folder. This returns true if successful, false
    if forbidden, and raises otherwise."
   [google-ctx folder-id file-id]
-  (let [query {:model :files
-               :action :update
-               :parent-ids [folder-id]
-               :file-id file-id}]
-    (try
-      (execute-query! google-ctx query)
-      true
-      (catch GoogleJsonResponseException e
-        (when (not= 400 (.getStatusCode e))
-          (throw e))
-        false))))
+  (try
+    (execute-query! google-ctx (move-file folder-id file-id))
+    true
+    (catch GoogleJsonResponseException e
+      (when (not= 400 (.getStatusCode e))
+        (throw e))
+      false)))
+
+(defn upload-file
+  [folder-id title description mime-type content]
+  {:model :files
+   :action :insert
+   :parent-ids [folder-id]
+   :title title
+   :description description
+   :mime-type mime-type})
+
+(defn upload-file!
+  "Uploads a file with the given title, description, type, and content into
+   the given folder"
+  [google-ctx folder-id title description mime-type content]
+  (execute-query! google-ctx
+                  (upload-file folder-id title description mime-type content)))
+
+(defn delete-file
+  [file-id]
+  {:model :files
+   :action :delete
+   :file-id file-id})
+
+(defn delete-file!
+  "Permanently deletes the given file. If the file is a folder, this also
+   deletes all of its descendents."
+  [google-ctx file-id]
+  (execute-query! google-ctx (delete-file file-id)))
+
+(defn list-files
+  [folder-id]
+  {:model :files
+   :action :list
+   :query (format "'%s' in parents" folder-id)})
+
+(defn list-files!
+  [google-ctx folder-id]
+  "Returns a seq of files in the given folder"
+  (execute-query! google-ctx (list-files folder-id)))
 
 ;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns
 
@@ -537,8 +598,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(t/ann ^:no-check get-file-ids [cred/GoogleCtx -> (t/Map String String)])
-(defn get-file-ids
+#_(t/ann ^:no-check get-file-ids [cred/GoogleCtx -> (t/Map String String)])
+#_(defn get-file-ids
   "Given a google-ctx configuration map, gets the file-id and title
    for every file under the users Drive as a map in the structure
    of {file-id file-title}"
@@ -555,8 +616,8 @@
                        {(get file-map "id") (get file-map "title")}))]
     (into {} (map extract-id all-files))))
 
-(t/ann query-files [cred/GoogleCtx String -> (t/Vec File)])
-(defn query-files
+#_(t/ann query-files [cred/GoogleCtx String -> (t/Vec File)])
+#_(defn query-files
   "Runs the given query against the given context and returns the results
    as a vector of File objects"
   [google-ctx query]
@@ -582,35 +643,35 @@
             (recur))))
     #_(persistent! results)))
 
-(t/ann get-files [cred/GoogleCtx File -> (t/Vec File)])
-(defn get-files
+#_(t/ann get-files [cred/GoogleCtx File -> (t/Vec File)])
+#_(defn get-files
   "Returns a seq of files in the given folder"
   [google-ctx folder]
   (query-files google-ctx
                (str "'" (.getId folder) "' in parents and trashed=false")))
 
-(t/ann folder? [File -> Boolean])
-(defn folder?
+#_(t/ann folder? [File -> Boolean])
+#_(defn folder?
   "Returns true if the file is a folder"
   [file]
   (= "application/vnd.google-apps.folder" (.getMimeType file)))
 
-(t/ann folder-seq [cred/GoogleCtx File -> (t/Seq File)])
-(defn folder-seq
+#_(t/ann folder-seq [cred/GoogleCtx File -> (t/Seq File)])
+#_(defn folder-seq
   "Returns a lazy seq of all files in the given folder, including itself, via a
    depth-first traversal"
   [google-ctx folder]
   (tree-seq folder? (partial get-files google-ctx) folder))
 
-(t/ann get-root-files [cred/GoogleCtx -> (t/Vec File)])
-(defn get-root-files
+#_(t/ann get-root-files [cred/GoogleCtx -> (t/Vec File)])
+#_(defn get-root-files
   "Given a google-ctx configuration map, gets a seq of files from the user's
    root folder"
   [google-ctx]
   (query-files google-ctx "'root' in parents and trashed=false"))
 
-(t/ann get-file [cred/GoogleCtx String -> File])
-(defn get-file
+#_(t/ann get-file [cred/GoogleCtx String -> File])
+#_(defn get-file
   "Given a google-ctx configuration map and the id of the desired
   file as a string, returns that file as a drive File object"
   [google-ctx file-id]
@@ -622,8 +683,8 @@
     (cast File (doto (.execute get-file)
                  assert))))
 
-(t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
-(defn upload-file
+#_(t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
+#_(defn upload-file
   "Given a google-ctx configuration map, a file to upload, an ID of
    the parent folder you wish to insert the file in, the title of the
    Drive file, the description of the Drive file, and the MIME type of
@@ -648,8 +709,8 @@
     (cast File (doto (.execute drive-file)
                  assert))))
 
-(t/ann create-blank-file [cred/GoogleCtx String String String String -> File])
-(defn create-blank-file
+#_(t/ann create-blank-file [cred/GoogleCtx String String String String -> File])
+#_(defn create-blank-file
   "Given a google-ctx configuration map, an ID of the parent folder you
    wish to insert the file in, the title of the Drive file, the description
    of the Drive file, and the MIME type of the file(which will be converted
@@ -661,8 +722,8 @@
                assert)]
     (upload-file google-ctx file parent-folder-id file-title file-description media-type)))
 
-(t/ann download-file [cred/GoogleCtx String String -> String])
-(defn download-file
+#_(t/ann download-file [cred/GoogleCtx String String -> String])
+#_(defn download-file
   "Given a google-ctx configuration map, a file id to download,
    and a media type, download the drive file and then read it in
    and return the result of reading the file"
@@ -688,8 +749,8 @@
                        assert)]
     (slurp input-stream)))
 
-(t/ann delete-file [cred/GoogleCtx String -> File])
-(defn delete-file
+#_(t/ann delete-file [cred/GoogleCtx String -> File])
+#_(defn delete-file
   "Given a google-ctx configuration map, and a file
    id to delete, moves that file to the trash"
   [google-ctx file-id]
@@ -705,8 +766,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Edits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(t/ann update-file-title [cred/GoogleCtx String String -> File])
-(defn update-file-title
+#_(t/ann update-file-title [cred/GoogleCtx String String -> File])
+#_(defn update-file-title
   "Given a google-ctx configuration map, a file id, and a title,
    updates the title of the given file to the given title."
   [google-ctx file-id title]
@@ -724,8 +785,8 @@
     (cast File (doto (.execute update-request)
                  assert))))
 
-(t/ann update-file-description [cred/GoogleCtx String String -> File])
-(defn update-file-description
+#_(t/ann update-file-description [cred/GoogleCtx String String -> File])
+#_(defn update-file-description
   "Given a google-ctx configuration map, a file id, and a description,
    updates the description of the given file to the given description."
   [google-ctx file-id description]
@@ -747,8 +808,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;; File Properties Management ;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(t/ann get-properties [cred/GoogleCtx String -> (t/Seq Property)])
-(defn get-properties
+#_(t/ann get-properties [cred/GoogleCtx String -> (t/Seq Property)])
+#_(defn get-properties
   "Given a google-ctx configuration map, and a file id, returns a
    list of all Properties associated with this file"
   [google-ctx file-id]
@@ -763,8 +824,8 @@
      (.getItems ^PropertyList properties)
      (t/Seq Property))))
 
-(t/ann update-property [cred/GoogleCtx String String String String -> Property])
-(defn update-property
+#_(t/ann update-property [cred/GoogleCtx String String String String -> Property])
+#_(defn update-property
   "Given a google-ctx configuration map, a file id, a key, a value, and
    a visibility(public or private) updates the property on this file to
    the new value if a property with the given key already exists, otherwise
@@ -783,8 +844,8 @@
     (cast Property (doto (.execute update-request)
                      assert))))
 
-(t/ann delete-property [cred/GoogleCtx String String String -> t/Any])
-(defn delete-property
+#_(t/ann delete-property [cred/GoogleCtx String String String -> t/Any])
+#_(defn delete-property
   "Given a google-ctx configuration map, a file id, and a key,
    deletes the property on this file associated with this key"
   [google-ctx file-id key visibility]
@@ -800,8 +861,8 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;; File Permissions Management ;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(t/ann get-permissions [cred/GoogleCtx String -> (t/Seq Permission)])
-(defn get-permissions
+#_(t/ann get-permissions [cred/GoogleCtx String -> (t/Seq Permission)])
+#_(defn get-permissions
   "Given a google-ctx configuration map, and a file-id, gets all of the
    permissions for the given file"
   [google-ctx file-id]
@@ -816,8 +877,8 @@
      (.getItems ^PermissionList permissions)
      (t/Seq Permission))))
 
-(t/ann update-permission [cred/GoogleCtx String String String -> Permission])
-(defn update-permission
+#_(t/ann update-permission [cred/GoogleCtx String String String -> Permission])
+#_(defn update-permission
   "Given a google-ctx configuration map, a file-id, an email address of the
    user who's permissions we are editing, and a new role for the user on this
    file(reader or writer, owner is not currently supported), adds or edits the
@@ -849,8 +910,8 @@
     (tu/ignore-with-unchecked-cast (.execute request)
                                    Permission)))
 
-(t/ann remove-permission [cred/GoogleCtx String String -> t/Any])
-(defn remove-permission
+#_(t/ann remove-permission [cred/GoogleCtx String String -> t/Any])
+#_(defn remove-permission
   "Given a google-ctx configuration map, a file-id, and  an email address
    of the user who's permissions we are editing, removes this user from
    the permissions of the given file"

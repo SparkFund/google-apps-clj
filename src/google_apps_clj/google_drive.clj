@@ -457,7 +457,7 @@
    other operation."
   [google-ctx deauthorization]
   (let [{:keys [file-id principal]} deauthorization
-        extant (find-extant-permissions google-ctx file-id principal)
+        extant (find-extant-permissions! google-ctx file-id principal)
         deletes (mapv (fn [permission]
                         {:model :permissions
                          :action :delete
@@ -466,6 +466,9 @@
                       extant)]
     (execute! google-ctx deletes)
     nil))
+
+(def folder-mime-type
+  "application/vnd.google-apps.folder")
 
 (defn create-folder
   [parent-id title]
@@ -549,6 +552,10 @@
   "Returns the metadata for the given file"
   (execute-query! google-ctx (get-file file-id)))
 
+(defn with-fields
+  [request fields]
+  (update-in request [:fields] (fnil into #{}) fields))
+
 ;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns
 
 (defn all-files
@@ -566,9 +573,6 @@
 (defn parent-ids
   [file]
   (into #{} (map :id (:parents file))))
-
-(def folder-mime-type
-  "application/vnd.google-apps.folder")
 
 (defn folder?
   [file]

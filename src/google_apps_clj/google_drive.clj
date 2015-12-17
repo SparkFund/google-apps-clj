@@ -24,7 +24,6 @@
                                           Drive$Files$List
                                           Drive$Files$Update
                                           Drive$Permissions$Delete
-                                          Drive$Permissions$GetIdForEmail
                                           Drive$Permissions$Insert
                                           Drive$Permissions$List
                                           Drive$Permissions$Update
@@ -57,12 +56,108 @@
 
 ;;; Experimental fns operating on query data structures, with support for batching
 
+(t/defalias FileId t/Str)
+
+;; TODO union type of anything clojure.java.io/input-stream allows
+(t/defalias FileUploadContent t/Any)
+
+(t/defalias Fields (t/Seq (t/U t/Keyword t/Str)))
+
+(t/defalias PermissionIdentifier t/Str)
+
+(t/defalias Role (t/U ':owner ':writer ':reader))
+
+(t/defalias PermissionType (t/U ':user ':group ':domain ':anyone))
+
+(t/defalias FileDeleteQuery
+  (t/HMap :mandatory {:model ':files
+                      :action ':delete
+                      :file-id FileId}
+          :complete? true))
+
+(t/defalias FileGetQuery
+  (t/HMap :mandatory {:model ':files
+                      :action ':get
+                      :file-id FileId}
+          :optional {:fields Fields}
+          :complete? true))
+
+(t/defalias FileInsertQuery
+  (t/HMap :mandatory {:model ':files
+                      :action ':insert
+                      :description t/Str
+                      :mime-type t/Str
+                      :title t/Str}
+          :optional {:fields Fields
+                     :parent-ids (t/Seq FileId)
+                     :writers-can-share? t/Bool
+                     :content FileUploadContent
+                     :size t/Int} ; TODO non-negative integer
+          :complete? true))
+
+(t/defalias FileListQuery
+  (t/HMap :mandatory {:model ':files
+                      :action ':list}
+          :optional {:query t/Str
+                     :fields Fields}
+          :complete? true))
+
+(t/defalias FileUpdateQuery
+  (t/HMap :mandatory {:model ':files
+                      :action ':update
+                      :file-id FileId}
+          :optional {:fields Fields
+                     :parent-ids (t/Seq FileId)
+                     :writers-can-share? t/Bool
+                     :content FileContent
+                     :size t/Int}
+          :complete? true))
+
+(t/defalias PermissionDeleteQuery
+  (t/HMap :mandatory {:model ':permissions
+                      :action ':delete
+                      :file-id FileId
+                      :permission-id PermissionIdentifier}
+          :complete? true))
+
+(t/defalias PermissionInsertQuery
+  (t/HMap :mandatory {:model ':permissions
+                      :action ':insert
+                      :file-id FileId
+                      :role Role
+                      :type PermissionType
+                      :value t/Str}
+          :optional {:with-link? t/Bool
+                     :fields Fields}
+          :complete? true))
+
+(t/defalias PermissionListQuery
+  (t/HMap :mandatory {:model ':permissions
+                      :action ':list
+                      :file-id FileId}
+          :optional {:fields Fields}
+          :complete? true))
+
+(t/defalias PermissionUpdateQuery
+  (t/HMap :mandatory {:model ':permissions
+                      :action ':update
+                      :file-id FileId
+                      :permission-id PermissionIdentifier
+                      :role Role}
+          :optional {:fields Fields
+                     :transferOwnership? t/Bool}
+          :complete? true))
+
 (t/defalias Query
-  '{:type Keyword
-    :action Keyword
-    :fields '[Keyword]
-    :query (t/Maybe String)
-    :file-id (t/Maybe String)})
+  (t/U FileDeleteQuery
+       FileGetQuery
+       FileInsertQuery
+       FileListQuery
+       FileUpdateQuery
+       PermissionDeleteQuery
+       PermissionInsertQuery
+       PermissionListQuery
+       PermissionUpdateQuery))
 
 (t/defalias Request
   (t/U Drive$Files$Delete
@@ -71,11 +166,11 @@
        Drive$Files$List
        Drive$Files$Update
        Drive$Permissions$Delete
-       Drive$Permissions$GetIdForEmail
        Drive$Permissions$Insert
        Drive$Permissions$List
        Drive$Permissions$Update))
 
+(t/ann build-file [(t/U FileInsertQuery FileUpdateQuery) -> File])
 (defn- ^File build-file
   [query]
   (let [{:keys [description mime-type parent-ids title writers-can-share?]} query]
@@ -88,11 +183,13 @@
       title (.setTitle title)
       (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
 
+(t/ann build-stream [(t/U FileInsertQuery FileUpdateQuery) ->
+                     (t/Option InputStreamContent)])
 (defn- ^InputStreamContent build-stream
   [query]
-  (let [{:keys [content type size]} query]
+  (let [{:keys [content mime-type size]} query]
     (when content
-      (cond-> (InputStreamContent. ^String type (io/input-stream content))
+      (cond-> (InputStreamContent. ^String mime-type (io/input-stream content))
         size (.setLength ^Long size)))))
 
 (t/ann build-request [cred/GoogleCtx Query -> Request])
@@ -176,11 +273,6 @@
           (-> (.insert (.permissions drive) file-id permission)
               (.setSendNotificationEmails false)
               (cond-> fields (.setFields fields))))
-        ;; TODO this is of debatable utility since it doesn't work for domain or
-        ;; anyone principals, and the id has no stability guarantee anyway
-        :get-id-for-email
-        (let [{:keys [email]} query]
-          (.getIdForEmail (.permissions drive) email))
         :update
         (let [{:keys [file-id permission-id role transfer-ownership?]} query
               permission (-> (Permission.)
@@ -255,6 +347,7 @@
     response))
 
 ;; TODO perhaps validate the codomain is a subset of the keyword domain
+(t/ann camel->kebab [t/Str -> t/Str])
 (defn- camel->kebab
   [camel]
   (let [accum (StringBuffer.)]
@@ -268,6 +361,7 @@
           (recur cs))))
     (.toString accum)))
 
+(t/ann convert-bean [java.util.Map -> (t/HMap)])
 (defn- convert-bean
   [bean]
   (->> (keys bean)
@@ -312,6 +406,7 @@
   nil
   (convert-response [_]))
 
+(t/ann rate-limit-exceeded? [GoogleJsonError -> t/Bool])
 (defn- rate-limit-exceeded?
   [^GoogleJsonError error]
   (and (= 403 (.getCode error))
@@ -323,6 +418,8 @@
                    false)))
              (.getErrors error))))
 
+;; TODO Can core.typed use a protocol as a type?
+(t/ann execute-query! [cred/GoogleCtx Query -> t/Any])
 (defn execute-query!
   "Executes the given query in the google context and returns the
    results converted into clojure forms. If the response is paginated,
@@ -344,6 +441,8 @@
                              data))))))
     @results))
 
+;; TODO can seq or vec types declare their lengths?
+(t/ann execute-query! [cred/GoogleCtx (t/Seq Query) -> (t/Seq t/Any)])
 (defn execute-batch!
   "Execute the given queries in a batch, returning their responses,
    converted into clojure forms, in the same order as the queries. If
@@ -398,6 +497,7 @@
             (recur next-requests)))))
     @responses))
 
+(t/ann execute! [cred/GoogleCtx (t/Seq Query) -> (t/Seq t/Any)])
 (defn execute!
   "Executes the given queries in the most efficient way, returning their
    results in a seq of clojure forms."
@@ -409,6 +509,7 @@
 
 ;;;; Commands and their helpers
 
+(t/ann derive-type [t/Str -> PermissionType])
 (defn- derive-type
   [principal]
   (cond (= "anyone" principal)
@@ -533,6 +634,7 @@
 (def folder-mime-type
   "application/vnd.google-apps.folder")
 
+(t/ann create-folder [FileId t/Str -> FileInsertQuery])
 (defn create-folder
   [parent-id title]
   {:model :files
@@ -546,6 +648,7 @@
   [google-ctx parent-id title]
   (execute-query! google-ctx (create-folder parent-id title)))
 
+(t/ann move-file [FileId FileId -> FileUpdateQuery])
 (defn move-file
   [folder-id file-id]
   {:model :files
@@ -565,6 +668,7 @@
         (throw e))
       false)))
 
+(t/ann upload-file [FileId t/Str t/Str t/Str t/Any -> FileInsertQuery])
 (defn upload-file
   [folder-id title description mime-type content]
   {:model :files
@@ -572,7 +676,8 @@
    :parent-ids [folder-id]
    :title title
    :description description
-   :mime-type mime-type})
+   :mime-type mime-type
+   :content content})
 
 (defn upload-file!
   "Uploads a file with the given title, description, type, and content into
@@ -581,6 +686,7 @@
   (execute-query! google-ctx
                   (upload-file folder-id title description mime-type content)))
 
+(t/ann delete-file [FileId -> FileDeleteQuery])
 (defn delete-file
   [file-id]
   {:model :files
@@ -593,6 +699,7 @@
   [google-ctx file-id]
   (execute-query! google-ctx (delete-file file-id)))
 
+(t/ann list-files [FileId -> FileListQuery])
 (defn list-files
   [folder-id]
   {:model :files
@@ -604,6 +711,7 @@
   "Returns a seq of files in the given folder"
   (execute-query! google-ctx (list-files folder-id)))
 
+(t/ann get-file [FileId -> FileGetQuery])
 (defn get-file
   [file-id]
   {:model :files
@@ -615,10 +723,12 @@
   "Returns the metadata for the given file"
   (execute-query! google-ctx (get-file file-id)))
 
+;; TODO core.typed should complain that not all Query types have :fields?
+(t/ann with-fields [Query -> Query])
 (defn with-fields
-  [request fields]
+  [query fields]
   "Sets or adds to the set of fields returned by the given request"
-  (update-in request [:fields] (fnil into #{}) fields))
+  (update-in query [:fields] (fnil into #{}) fields))
 
 ;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns
 

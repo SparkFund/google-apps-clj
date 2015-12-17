@@ -44,6 +44,19 @@
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
 (t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
 
+(t/non-nil-return com.google.api.services.drive.Drive/files :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Files/delete :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Files/get :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Files/insert :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Files/list :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Files/update :all)
+
+(t/non-nil-return com.google.api.services.drive.Drive/permissions :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Permissions/delete :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Permissions/insert :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Permissions/list :all)
+(t/non-nil-return com.google.api.services.drive.Drive$Permissions/update :all)
+
 (t/ann build-drive-service [cred/GoogleCtx -> Drive])
 (defn ^Drive build-drive-service
   "Given a google-ctx configuration map, builds a Drive service using
@@ -146,6 +159,7 @@
                       :permission-id PermissionIdentifier
                       :role Role}
           :optional {:fields Fields
+                     :with-link? t/Bool
                      :transferOwnership? t/Bool}
           :complete? true))
 
@@ -193,11 +207,11 @@
                            (.setId id)))
                        parent-ids))]
     (cond-doto (File.)
-               description (.setDescription description)
-               mime-type (.setMimeType mime-type)
-               parents (.setParents parents)
-               title (.setTitle title)
-               (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
+      description (.setDescription description)
+      mime-type (.setMimeType mime-type)
+      parents (.setParents parents)
+      title (.setTitle title)
+      (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
 
 (t/ann build-stream [(t/U FileInsertQuery FileUpdateQuery) ->
                      (t/Option InputStreamContent)])
@@ -206,9 +220,9 @@
   (let [{:keys [content mime-type size]} query]
     (when (and content mime-type)
       (cond-doto (InputStreamContent. ^String mime-type (io/input-stream content))
-                 size (.setLength ^Long size)))))
+        size (.setLength ^Long size)))))
 
-(t/ann ^:no-check build-request [cred/GoogleCtx Query -> Request])
+(t/ann build-request [cred/GoogleCtx Query -> Request])
 (defn- ^DriveRequest build-request
   "Converts a query into a stateful request object executable in the
    given google context. Queries are maps with the following required
@@ -246,13 +260,15 @@
         (let [{:keys [file-id]} query]
           (.delete (.files drive) file-id))
         :list
-        (let [{:keys [query]} query]
-          (cond-> (.list (.files drive))
-            fields (.setFields fields)
-            query (.setQ query)))
+        (let [{:keys [query]} query
+              request (cond-doto (.list (.files drive))
+                        query (.setQ query))]
+          (cond-doto ^DriveRequest request
+            fields (.setFields fields)))
         :get
-        (let [{:keys [file-id]} query]
-          (cond-> (.get (.files drive) file-id)
+        (let [{:keys [file-id]} query
+              request (.get (.files drive) file-id)]
+          (cond-doto ^DriveRequest request
             fields (.setFields fields)))
         :update
         (let [{:keys [file-id]} query
@@ -261,44 +277,49 @@
               request (if stream
                         (.update (.files drive) file-id file stream)
                         (.update (.files drive) file-id file))]
-          (cond-> request
+          (cond-doto ^DriveRequest request
             fields (.setFields fields)))
         :insert
         (let [file (build-file query)
               stream (build-stream query)
               request (if stream
-                        (-> (.insert (.files drive) file stream)
-                            (.setConvert true))
+                        (doto (.insert (.files drive) file stream)
+                          (.setConvert true))
                         (.insert (.files drive) file))]
-          (cond-> request
+          (cond-doto ^DriveRequest request
             fields (.setFields fields))))
       :permissions
       (case action
         :list
-        (let [{:keys [file-id]} query]
-          (cond-> (.list (.permissions drive) file-id)
+        (let [{:keys [file-id]} query
+              request (.list (.permissions drive) file-id)]
+          (cond-doto ^DriveRequest request
             fields (.setFields fields)))
         :insert
         (let [{:keys [file-id value role type with-link?]} query
-              permission (-> (Permission.)
+              permission (doto (Permission.)
                              (.setRole (name role))
                              (.setType (name type))
                              (.setValue value)
-                             (cond-> (not (nil? with-link?))
-                               (.setWithLink with-link?)))]
-          (-> (.insert (.permissions drive) file-id permission)
-              (.setSendNotificationEmails false)
-              (cond-> fields (.setFields fields))))
+                             (cond-doto (not (nil? with-link?))
+                               (.setWithLink with-link?)))
+              request (doto (.insert (.permissions drive) file-id permission)
+                        (.setSendNotificationEmails false))]
+          (cond-doto ^DriveRequest request
+            fields (.setFields fields)))
         :update
         (let [{:keys [file-id permission-id role transfer-ownership?]} query
-              permission (-> (Permission.)
-                             (.setRole role))]
-          (cond-> (.update (.permissions drive) file-id permission-id permission)
-            (not (nil? transfer-ownership?)) (.setTransferOwnership transfer-ownership?)
+              permission (doto (Permission.)
+                           (.setRole (name role)))
+              request (cond-doto (.update (.permissions drive)
+                                          file-id permission-id permission)
+                        (not (nil? transfer-ownership?))
+                        (.setTransferOwnership transfer-ownership?))]
+          (cond-doto ^DriveRequest request
             fields (.setFields fields)))
         :delete
         (let [{:keys [file-id permission-id]} query]
-          (-> (.delete (.permissions drive) file-id permission-id)))))))
+          (.delete (.permissions drive) file-id permission-id))))))
 
 (t/defprotocol Requestable
   (response-data
@@ -547,8 +568,9 @@
    (let [list-query {:model :permissions
                      :action :list
                      :file-id file-id
-                     :fields [:id :role :withLink :type :domain :emailAddress]}]
-     (cond->> (execute-query! google-ctx list-query)
+                     :fields [:id :role :withLink :type :domain :emailAddress]}
+         permissions (execute-query! google-ctx list-query)]
+     (cond->> permissions
        principal (filter (fn [permission]
                            (condp = (derive-type principal)
                              :user
@@ -586,7 +608,7 @@
   [google-ctx file-id authorization]
   (let [{:keys [principal role searchable?]} authorization
         extant (get-permissions! google-ctx file-id principal)
-        found (atom false) ; TODO this could be a volatile
+        principal-id (atom nil) ; TODO this could be a volatile
         ids-to-delete (atom [])]
     ;; [principal withLink] seem to be a unique key within a file
     (doseq [permission extant]
@@ -594,14 +616,14 @@
                (case searchable?
                  true (true? (:with-link? permission))
                  false (nil? (:with-link? permission))))
-        (reset! found true)
+        (reset! principal-id (:id permission))
         (swap! ids-to-delete conj (:id permission))))
-    (let [deletes (mapv (fn [id] {:model :permissions
-                                  :action :delete
-                                  :file-id file-id
-                                  :permission-id id})
-                        @ids-to-delete)
-          insert (when-not @found
+    (let [deletes (map (fn [id] {:model :permissions
+                                 :action :delete
+                                 :file-id file-id
+                                 :permission-id id})
+                       @ids-to-delete)
+          insert (when-not @principal-id
                    {:model :permissions
                     :action :insert
                     :file-id file-id
@@ -609,10 +631,10 @@
                     :role role
                     :type (derive-type principal)
                     :with-link? searchable?
-                    :fields [:id]})
-          queries (cond-> deletes
-                    insert (conj insert))]
-      (execute! google-ctx queries))
+                    :fields [:id]})]
+      (execute! google-ctx deletes)
+      (when insert
+        (execute-query! google-ctx insert)))
     nil))
 
 (defn revoke!

@@ -25,11 +25,12 @@
           (is file-id)
           (is (= "test-title" (:title file)))
           (is (= "test-description" (:description file)))
-          (is (= "text/plain" (:mime-type file)))
+          (testing "converts files when possible"
+            (is (= "application/vnd.google-apps.document" (:mime-type file))))
           (let [file' (get-file! creds file-id)]
             (is (= "test-title" (:title file')))
             (is (= "test-description" (:description file')))
-            (is (= "text/plain" (:mime-type file'))))
+            (is (= "application/vnd.google-apps.document" (:mime-type file'))))
           (let [files (list-files! creds folder-id)]
             (is (= [file-id] (map :id files))))
           (delete-file! creds file-id)))

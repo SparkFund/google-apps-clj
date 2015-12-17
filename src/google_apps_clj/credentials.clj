@@ -85,7 +85,7 @@
       (.setRefreshToken (:refresh-token auth-map))
       (.setTokenType (:token-type auth-map)))))
 
-(t/ann build-credential [GoogleCtx -> HttpRequestInitializer])
+(t/ann ^:no-check build-credential [GoogleCtx -> HttpRequestInitializer])
 (defn build-credential
   "Given a google-ctx configuration map, builds a GoogleCredential Object from
    the token response and google secret created from those respective methods."

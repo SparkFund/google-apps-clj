@@ -42,6 +42,7 @@
            (java.io InputStream)))
 
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
+(t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
 
 (t/ann build-drive-service [cred/GoogleCtx -> Drive])
 (defn ^Drive build-drive-service
@@ -92,7 +93,7 @@
                      :parent-ids (t/Seq FileId)
                      :writers-can-share? t/Bool
                      :content FileUploadContent
-                     :size t/Int} ; TODO non-negative integer
+                     :size Long} ; TODO non-negative integer
           :complete? true))
 
 (t/defalias FileListQuery
@@ -170,29 +171,44 @@
        Drive$Permissions$List
        Drive$Permissions$Update))
 
+(defmacro cond-doto
+  [x & forms]
+  (assert (even? (count forms)))
+  (let [gx (gensym)]
+    `(let [~gx ~x]
+       ~@(map (fn [[test expr]]
+                (if (seq? expr)
+                  `(when ~test (~(first expr) ~gx ~@(next expr)))
+                  `(when ~test (~expr ~gx))))
+              (partition 2 forms))
+       ~gx)))
+
 (t/ann build-file [(t/U FileInsertQuery FileUpdateQuery) -> File])
 (defn- ^File build-file
   [query]
-  (let [{:keys [description mime-type parent-ids title writers-can-share?]} query]
-    (cond-> (File.)
-      description (.setDescription description)
-      mime-type (.setMimeType mime-type)
-      (seq parent-ids) (.setParents (map (fn [id] (-> (ParentReference.)
-                                                      (.setId id)))
-                                         parent-ids))
-      title (.setTitle title)
-      (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
+  (let [{:keys [description mime-type parent-ids title writers-can-share?]} query
+        parents (when (seq parent-ids)
+                  (map (t/fn [id :- FileId]
+                         (doto (ParentReference.)
+                           (.setId id)))
+                       parent-ids))]
+    (cond-doto (File.)
+               description (.setDescription description)
+               mime-type (.setMimeType mime-type)
+               parents (.setParents parents)
+               title (.setTitle title)
+               (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
 
 (t/ann build-stream [(t/U FileInsertQuery FileUpdateQuery) ->
                      (t/Option InputStreamContent)])
 (defn- ^InputStreamContent build-stream
   [query]
   (let [{:keys [content mime-type size]} query]
-    (when content
-      (cond-> (InputStreamContent. ^String mime-type (io/input-stream content))
-        size (.setLength ^Long size)))))
+    (when (and content mime-type)
+      (cond-doto (InputStreamContent. ^String mime-type (io/input-stream content))
+                 size (.setLength ^Long size)))))
 
-(t/ann build-request [cred/GoogleCtx Query -> Request])
+(t/ann ^:no-check build-request [cred/GoogleCtx Query -> Request])
 (defn- ^DriveRequest build-request
   "Converts a query into a stateful request object executable in the
    given google context. Queries are maps with the following required
@@ -284,16 +300,16 @@
         (let [{:keys [file-id permission-id]} query]
           (-> (.delete (.permissions drive) file-id permission-id)))))))
 
-(defprotocol Request
+(t/defprotocol Requestable
   (response-data
-   [request response]
+   [request response :- (t/Option java.util.Map)] :- (t/Option (t/U java.util.Map java.util.List))
    "Extracts the good bit from the response")
   (next-page!
-   [request response]
+   [request response :- (t/Option java.util.Map)] :- (t/Option Requestable)
    "Mutates the request to retrieve the next page of results if supported and
     present"))
 
-(extend-protocol Request
+(extend-protocol Requestable
   Drive$Files$Delete
   (next-page! [request response])
   (response-data [request response]
@@ -326,11 +342,6 @@
   (response-data [request response]
     response)
 
-  Drive$Permissions$GetIdForEmail
-  (next-page! [request response])
-  (response-data [request response]
-    response)
-
   Drive$Permissions$Insert
   (next-page! [request response])
   (response-data [request response]
@@ -351,7 +362,7 @@
 (defn- camel->kebab
   [camel]
   (let [accum (StringBuffer.)]
-    (loop [[c & cs] camel]
+    (loop [[^Character c & cs] camel]
       (if (not c)
         (.toString accum)
         (let [c' (Character/toLowerCase c)]
@@ -442,7 +453,7 @@
     @results))
 
 ;; TODO can seq or vec types declare their lengths?
-(t/ann execute-query! [cred/GoogleCtx (t/Seq Query) -> (t/Seq t/Any)])
+(t/ann execute-batch! [cred/GoogleCtx (t/Seq Query) -> (t/Seq t/Any)])
 (defn execute-batch!
   "Execute the given queries in a batch, returning their responses,
    converted into clojure forms, in the same order as the queries. If
@@ -462,7 +473,6 @@
         batch (BatchRequest. cred/http-transport credential)
         responses (atom (into [] (repeat (count requests) nil)))]
     (loop [requests (map-indexed vector requests)]
-      (prn "batch executing" (count requests))
       (let [next-requests (atom {})]
         (doseq [[i ^DriveRequest request] requests]
           (.queue request batch GoogleJsonErrorContainer
@@ -511,7 +521,7 @@
 
 (t/ann derive-type [t/Str -> PermissionType])
 (defn- derive-type
-  [principal]
+  [^String principal]
   (cond (= "anyone" principal)
         :anyone
         (pos? (.indexOf principal "@"))

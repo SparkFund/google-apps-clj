@@ -32,7 +32,12 @@
   "Given a google-ctx configuration map, builds a SpreadsheetService using
    the credentials coming from google-ctx"
   [google-ctx]
-  (let [google-credential (cred/build-credential google-ctx)
+  ;; TODO hilariously, drive and sheets java objects specify timeouts
+  ;; by apparently completely incompatible mechanisms. Here, we just
+  ;; explicitly ignore any timeouts while I pause and reflect on my
+  ;; increasingly bad life choices
+  (let [google-ctx (dissoc google-ctx :read-timeout :open-timeout)
+        google-credential (cred/build-credential google-ctx)
         service (doto (SpreadsheetService. "Default Spreadsheet Service")
                   (.setOAuth2Credentials google-credential))]
     service))
@@ -80,7 +85,7 @@
                                                                   :worksheet t/Map}
                                                                 '{:error t/Keyword})])
 (defn file-name->ids
-  "Given a google-ctx, and a spreadsheet name, gets the spreadsheet id and all of the 
+  "Given a google-ctx, and a spreadsheet name, gets the spreadsheet id and all of the
    worksheet ids for this file and outputs them as a map"
   [google-ctx spreadsheet-name]
   (let [sheet-service (build-sheet-service google-ctx)
@@ -106,7 +111,7 @@
 (t/ann create-new-worksheet
        [cred/GoogleCtx SpreadsheetEntry Number Number String -> WorksheetEntry])
 (defn create-new-worksheet
-  "Given a google-ctx configuration map, SpreadsheetEntry, rows, columns, and 
+  "Given a google-ctx configuration map, SpreadsheetEntry, rows, columns, and
    a title, create a new worksheet for for the SpreadsheetEntry with this data"
   [google-ctx spreadsheet-entry rows cols title]
   (let [sheet-service (build-sheet-service google-ctx)
@@ -154,7 +159,7 @@
        [SpreadsheetService SpreadsheetEntry String -> (t/U '{:worksheet WorksheetEntry}
                                                            '{:error (t/Val :no-entry)})])
 (defn find-worksheet-by-id
-  "Given a SpreadsheetService, SpreadSheetEntry and the id of a worksheet, find 
+  "Given a SpreadsheetService, SpreadSheetEntry and the id of a worksheet, find
    the WorksheetEntry with the given id in a map, or an error message in a map"
   [sheet-service spreadsheet id]
   (let [url (io/as-url (str (.getWorksheetFeedUrl ^SpreadsheetEntry spreadsheet) "/" id))
@@ -169,7 +174,7 @@
        [SpreadsheetService SpreadsheetEntry String -> (t/U '{:worksheet WorksheetEntry}
                                                            '{:error t/Keyword})])
 (defn find-worksheet-by-title
-  "Given a SpreadsheetService, SpreadSheetEntry and a title of a worksheet, find the WorksheetEntry 
+  "Given a SpreadsheetService, SpreadSheetEntry and a title of a worksheet, find the WorksheetEntry
    with the given title in a map, or an error message in a map"
   [sheet-service spreadsheet title]
   (let [query (doto (WorksheetQuery. (doto (.getWorksheetFeedUrl ^SpreadsheetEntry spreadsheet)
@@ -245,7 +250,7 @@
        [cred/GoogleCtx String String (t/Seq (t/Map String String)) -> (t/U ListEntry
                                                                            '{:error t/Keyword})])
 (defn insert-row
-  "Given a google-ctx configuration map, the name of a spreadsheet, 
+  "Given a google-ctx configuration map, the name of a spreadsheet,
    name of a worksheet in that spreadsheet, and a map of header-value pairs
    ({header value}) where header and value are both strings.
    NOTE: The headers must be all lowercase with no capital letters even if the header
@@ -279,7 +284,7 @@
 (defn batch-update-cells
   "Given a google-ctx configuration map, the id of a spreadsheet, the id of
    a worksheet, and a list of cells(in the form [row column value]), sends a batch
-   request of all cell updates to the drive api. Will return {:error :msg} if 
+   request of all cell updates to the drive api. Will return {:error :msg} if
    something goes wrong along the way"
   [google-ctx spreadsheet-id worksheet-id cells]
   (let [sheet-service (build-sheet-service google-ctx)
@@ -306,7 +311,7 @@
             cell-feed (.getFeed sheet-service cell-feed-url CellFeed)
             batch-link (.getLink cell-feed ILink$Rel/FEED_BATCH ILink$Type/ATOM)
             batch-url (io/as-url (.getHref batch-link))
-            _ (.setHeader sheet-service "If-Match" "*")] 
+            _ (.setHeader sheet-service "If-Match" "*")]
         (.batch sheet-service batch-url batch-request)))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
@@ -375,7 +380,7 @@
 (defn write-worksheet
   "Given a google-ctx configuration map, the id of a spreadsheet, the id of a worksheet,
    and a map of the data {:headers data :values data}, resizes the sheet, which erases all
-   of the previous data, creates cells for the new data-map and calls batch-update cells 
+   of the previous data, creates cells for the new data-map and calls batch-update cells
    on the data in chunks of a certain size that the API can handle"
   [google-ctx spreadsheet-id worksheet-id data-map]
   (let [sheet-service (build-sheet-service google-ctx)

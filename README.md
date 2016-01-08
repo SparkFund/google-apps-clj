@@ -1,25 +1,12 @@
 # google-apps-clj
 
-A Clojure library that wraps the Google Java API for different Google Applications. This library is fully supported by [core.typed](https://github.com/clojure/core.typed)
+A Clojure library that wraps the Google Java API for different Google
+Applications. This library is partially typed using core.typed.
 
 ## Obtaining
-If you are using Leiningen, you can add
-```
-[google-apps-clj "0.2.1"]
-```
-to your project.clj file and then run
-```
-lein deps
-```
-to download it from Clojars.
 
-If you are using Maven:
 ```
-<dependency>
-  <groupId>google-apps-clj</groupId>
-  <artifactId>google-apps-clj</artifactId>
-  <version>0.2.1</version>
-</dependency>
+[google-apps-clj "0.3.0"]
 ```
 
 ## Currently supported APIs
@@ -52,20 +39,12 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 ##### Supported Functionality
 
-* Getting all file ids and titles(in a map)
-* Getting a file by id
-* Creating a blank file
-* Uploading a file to drive
-* Updating a file's title
-* Updating a file's description
-* Getting a file's key-value pair properties
-* Editing a file's key-value pair properties
-* Deleting a file's key-value pair properties
-* Getting a file's permissions
-* Editing a file's permissions (by user)
-* Deleting a file's permissions (by user)
-* Downloading a file to drive
-* Deleting a file from drive(moves it to the trash)
+* Searching
+* Fetching
+* Uploading
+* Updating
+* Deleting
+* Authorizing
 
 ### Spreadsheet API
 
@@ -87,22 +66,29 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 * Listing all events within a certain date-time range (for user)
 * Listing all events on a given day (for user)
 * Listing upcoming events with a supplied name (for user)
-* Creating an event with a certain time range 
+* Creating an event with a certain time range
 * Creating an all day event
 
 ## What's Next?
 
+#### General
+
+* Allow service account authentication in addition to the current
+  user-account OAuth funkiness
+* Consider ditching the baroque Google java library in favor of
+  direct integration with the api using clj-http or the like
+
 #### Drive API
-* 
+* Consider making file maps the unit of work for the command fns
+* Or possibly an Identifiable protocol to allow file ids or maps
 
 #### Sheets API
-* 
+* Consider a cleaner abstraction instead of a grab bag of fns
 
 #### Calendar API
-* 
 
 ## License
 
-Copyright © 2015 
+Copyright © SparkFund 2015-2016
 
 Distributed under the Apache License, Version 2.0.

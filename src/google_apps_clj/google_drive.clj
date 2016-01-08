@@ -66,6 +66,7 @@
   (let [drive-builder (->> google-ctx
                            cred/build-credential
                            (Drive$Builder. cred/http-transport cred/json-factory))]
+    (.setApplicationName drive-builder "google-apps-clj")
     (cast Drive (doto (.build drive-builder)
                   assert))))
 

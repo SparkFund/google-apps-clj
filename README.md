@@ -6,7 +6,7 @@ Applications. This library is partially typed using core.typed.
 ## Obtaining
 
 ```
-[google-apps-clj "0.3.0"]
+[google-apps-clj "0.3.1"]
 ```
 
 ## Currently supported APIs

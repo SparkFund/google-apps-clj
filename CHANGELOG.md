@@ -1,5 +1,9 @@
 # google-apps-clj changes
 
+## 0.3.1
+
+* Downgrade core.typed to 0.3.14
+
 ## 0.3.0
 
 * Began tracking changes

@@ -1,4 +1,4 @@
-(defproject google-apps-clj "0.2.2"
+(defproject google-apps-clj "0.3.0"
   :description "A Clojure library that wraps the Google Java API"
   :url "https://github.com/SparkFund/google-apps-clj"
   :license {:name "Apache License, Version 2.0"

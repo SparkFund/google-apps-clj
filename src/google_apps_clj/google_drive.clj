@@ -1,9 +1,7 @@
 (ns google-apps-clj.google-drive
   "A library for connecting to Google Drive through the Drive API"
   (:require [clojure.core.typed :as t]
-            [clojure.core.typed.unsafe :as tu]
-            [clojure.edn :as edn :only [read-string]]
-            [clojure.java.io :as io :only [as-url file resource]]
+            [clojure.java.io :as io]
             [clojure.string :as string]
             [google-apps-clj.credentials :as cred])
   (:import (com.google.api.client.googleapis.batch BatchRequest
@@ -41,6 +39,9 @@
                                                 User)
            (java.io InputStream)))
 
+;;; TODO this does not type check now due to protocol (ab)use and general
+;;; unfamiliarity with types when I first rewrote it
+
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
 (t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
 
@@ -67,8 +68,6 @@
                            (Drive$Builder. cred/http-transport cred/json-factory))]
     (cast Drive (doto (.build drive-builder)
                   assert))))
-
-;;; Experimental fns operating on query data structures, with support for batching
 
 (t/defalias FileId t/Str)
 
@@ -160,7 +159,7 @@
                       :role Role}
           :optional {:fields Fields
                      :with-link? t/Bool
-                     :transferOwnership? t/Bool}
+                     :transfer-ownership? t/Bool}
           :complete? true))
 
 (t/defalias Query
@@ -321,12 +320,12 @@
         (let [{:keys [file-id permission-id]} query]
           (.delete (.permissions drive) file-id permission-id))))))
 
-(t/defprotocol Requestable
+(defprotocol Requestable
   (response-data
-   [request response :- (t/Option java.util.Map)] :- (t/Option (t/U java.util.Map java.util.List))
+   [request response]
    "Extracts the good bit from the response")
   (next-page!
-   [request response :- (t/Option java.util.Map)] :- (t/Option Requestable)
+   [request response]
    "Mutates the request to retrieve the next page of results if supported and
     present"))
 
@@ -347,11 +346,16 @@
     response)
 
   Drive$Files$List
-  (next-page! [request ^FileList response]
-    (when-let [page-token (.getNextPageToken response)]
-      (.setPageToken request page-token)))
-  (response-data [request ^FileList response]
-    (.getItems response))
+  (next-page! [request response]
+    (when response
+      (let [response (t/cast FileList response)
+            page-token (.getNextPageToken ^FileList response)]
+        (when page-token
+          (.setPageToken request page-token)))))
+  (response-data [request response]
+    (when response
+      (let [response (t/cast FileList response)]
+        (.getItems ^FileList response))))
 
   Drive$Files$Update
   (next-page! [request response])
@@ -450,8 +454,6 @@
                    false)))
              (.getErrors error))))
 
-;; TODO Can core.typed use a protocol as a type?
-(t/ann execute-query! [cred/GoogleCtx Query -> t/Any])
 (defn execute-query!
   "Executes the given query in the google context and returns the
    results converted into clojure forms. If the response is paginated,
@@ -459,7 +461,6 @@
   [google-ctx query]
   (let [request (build-request google-ctx query)
         results (atom nil)]
-    ;; TODO the results could be a volatile in clojure 1.7
     (loop []
       (let [response (.execute request)
             data (convert-response (response-data request response))]
@@ -473,8 +474,6 @@
                              data))))))
     @results))
 
-;; TODO can seq or vec types declare their lengths?
-(t/ann execute-batch! [cred/GoogleCtx (t/Seq Query) -> (t/Seq t/Any)])
 (defn execute-batch!
   "Execute the given queries in a batch, returning their responses,
    converted into clojure forms, in the same order as the queries. If
@@ -488,7 +487,7 @@
    There is no limit on the number of rate limit retries. All other
    errors are given as GoogleJsonError objects in the responses."
   [google-ctx queries]
-  ;; TODO partition queries into batches of 1000
+  ;; TODO partition queries into batches?
   (let [requests (map (partial build-request google-ctx) queries)
         credential (cred/build-credential google-ctx)
         batch (BatchRequest. cred/http-transport credential)
@@ -528,15 +527,22 @@
             (recur next-requests)))))
     @responses))
 
-(t/ann execute! [cred/GoogleCtx (t/Seq Query) -> (t/Seq t/Any)])
+(def batch-size
+  "Google internally unwraps batches and processes them concurrently. Batches
+   that are too large can cause the request to exceed Google's api rate limit,
+   which is applied to api requests, not http requests."
+  20)
+
 (defn execute!
   "Executes the given queries in the most efficient way, returning their
-   results in a seq of clojure forms."
+   results in a seq of clojure forms. Note the queries may be processed
+   concurrently."
   [google-ctx queries]
   (when (seq queries)
     (if (= 1 (count queries))
       [(execute-query! google-ctx (first queries))]
-      (execute-batch! google-ctx queries))))
+      (let [batches (partition-all batch-size queries)]
+        (doall (mapcat (partial execute-batch! google-ctx) batches))))))
 
 ;;;; Commands and their helpers
 
@@ -655,14 +661,6 @@
     (execute! google-ctx deletes)
     nil))
 
-(defn get-authorizations!
-  [google-ctx file-id]
-  (let [request {:model :permissions
-                 :action :list
-                 :file-id file-id
-                 :fields [:emailAddress :type :role :domain]
-                 }]))
-
 (def folder-mime-type
   "application/vnd.google-apps.folder")
 
@@ -718,6 +716,30 @@
   (execute-query! google-ctx
                   (upload-file folder-id title description mime-type content)))
 
+(defn download-file!
+  "Downloads the contents of the given file as an inputstream, or nil if the
+   file is not available or is not available in the given mime type."
+  ([google-ctx file]
+   (download-file! google-ctx file nil))
+  ([google-ctx file mime-type]
+   (when (:id file)
+     (let [drive (build-drive-service google-ctx)]
+       (if mime-type
+         (when-let [url (get (:export-links file) mime-type)]
+           ;; This is purely to force authentication on the stupid drive request
+           ;; factory. There is almost certainly a better way to handle this,
+           ;; either locally or by reconsidering the google-ctx object
+           (.execute (.setFields (.get (.files drive) (:id file)) "id"))
+           (let [http-request (.getRequestFactory drive)
+                 gurl (GenericUrl. ^String url)
+                 _ (prn "gurl" gurl)
+                 get-request (.buildGetRequest http-request gurl)
+                 response (.execute get-request)]
+             (.getContent response)))
+         (when-let [url (:download-url file)]
+           (let [drive (build-drive-service google-ctx)]
+             (.executeMediaAsInputStream (.get (.files drive) ^String (:id file))))))))))
+
 (t/ann delete-file [FileId -> FileDeleteQuery])
 (defn delete-file
   [file-id]
@@ -739,8 +761,8 @@
    :query (format "'%s' in parents" folder-id)})
 
 (defn list-files!
-  [google-ctx folder-id]
   "Returns a seq of files in the given folder"
+  [google-ctx folder-id]
   (execute-query! google-ctx (list-files folder-id)))
 
 (t/ann get-file [FileId -> FileGetQuery])
@@ -751,40 +773,38 @@
    :file-id file-id})
 
 (defn get-file!
-  [google-ctx file-id]
   "Returns the metadata for the given file"
+  [google-ctx file-id]
   (execute-query! google-ctx (get-file file-id)))
 
 ;; TODO core.typed should complain that not all Query types have :fields?
 (t/ann with-fields [Query -> Query])
 (defn with-fields
-  [query fields]
   "Sets or adds to the set of fields returned by the given request"
+  [query fields]
   (update-in query [:fields] (fnil into #{}) fields))
 
-;;; These vars probably belong elsewhere, e.g. a google-drive.repl ns
-
-(defn all-files
-  [google-ctx]
+(t/ann all-files Query)
+(def all-files
   (let [fields [:id :title :writersCanShare :mimeType
                 "permissions(emailAddress,type,domain,role,withLink)"
                 "owners(emailAddress)"
-                "parents(id)"]
-        query {:model :files
-               :action :list
-               :fields fields
-               :query "trashed=false"}]
-    (execute-query! google-ctx query)))
+                "parents(id)"]]
+    {:model :files
+     :action :list
+     :fields fields
+     :query "trashed=false"}))
 
-(defn parent-ids
-  [file]
-  (into #{} (map :id (:parents file))))
-
+(t/ann folder? [(t/HMap :mandatory {:mime-type t/Str}) -> t/Bool])
 (defn folder?
+  "Predicate fn indicating if the given file map has the folder mime type"
   [file]
   (= folder-mime-type (:mime-type file)))
 
 (defn resolve-file-id!
+  "Given a seq of titles relative to the root folder, returns the file id if
+   there is one. If any title matches more than one folder, this raises an
+   error."
   [google-ctx path]
   (when (seq path)
     (loop [folder-id "root"
@@ -805,399 +825,3 @@
             (if (seq path')
               (recur id path')
               id)))))))
-
-;; abandoned files belong to folders not in our corpus
-;; orphaned files do not belong to any folders
-;; index looks up a file by id
-;; children looks up child files by parent id
-(defn file-tree
-  [files]
-  (let [index (->> files
-                   (map (juxt :id identity))
-                   (into {}))]
-    (reduce (fn [accum file]
-              (let [parent-ids (parent-ids file)]
-                (if (seq parent-ids)
-                  (reduce (fn [accum parent-id]
-                            (-> accum
-                                (update-in [:children parent-id]
-                                           (fnil conj []) file)
-                                (cond-> (not (index parent-id))
-                                  (update-in [:abandoned]
-                                             (fnil conj []) file))))
-                          accum
-                          parent-ids)
-                  (update-in accum [:orphans] (fnil conj []) file))))
-            {:index index}
-            files)))
-
-(defn folder-seq
-  [tree folder-id]
-  (let [{:keys [index children]} tree]
-    (tree-seq folder?
-              (comp children :id)
-              (index folder-id))))
-
-(defn rfolder-tree!
-  [creds folder-id]
-  (let [fields [:id :title :writersCanShare :mimeType
-                "permissions(emailAddress,type,domain,role,withLink)"
-                "owners(emailAddress)"]
-        list-files #(-> % list-files (with-fields fields))
-        tree (atom {:children {}
-                    :index {}})]
-    (loop [folder-ids [folder-id]]
-      (when (seq folder-ids)
-        (let [batches (partition-all 100 (map list-files folder-ids))
-              responses (mapcat (partial execute! creds) batches)]
-          (doseq [[folder-id files] (map vector folder-ids responses)]
-            (swap! tree (fn [tree]
-                          (reduce (fn [accum file]
-                                    (assoc-in accum [:index (:id file)] file))
-                                  (assoc-in tree [:children folder-id] files)
-                                  files))))
-          (recur (map :id (filter folder? (apply concat responses)))))))
-    @tree))
-
-;;; Everything hereafter should probably be rewritten in terms of the above
-;;; fns, though some response types will change if we do
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Management ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-#_(t/ann ^:no-check get-file-ids [cred/GoogleCtx -> (t/Map String String)])
-#_(defn get-file-ids
-  "Given a google-ctx configuration map, gets the file-id and title
-   for every file under the users Drive as a map in the structure
-   of {file-id file-title}"
-  [google-ctx]
-  (let [drive-service (build-drive-service google-ctx)
-        drive-files (doto (.files ^Drive drive-service)
-                      assert)
-        files-list (doto (.list drive-files)
-                     assert)
-        all-files (doto (.getItems (.execute files-list))
-                    assert)
-        extract-id (fn [file]
-                     (let [file-map (into {} file)]
-                       {(get file-map "id") (get file-map "title")}))]
-    (into {} (map extract-id all-files))))
-
-#_(t/ann query-files [cred/GoogleCtx String -> (t/Vec File)])
-#_(defn query-files
-  "Runs the given query against the given context and returns the results
-   as a vector of File objects"
-  [google-ctx query]
-  ;; The Drive object explicitly disclaims thread-safety, and the contracts
-  ;; given by the execute response and items are unclear, so instead of
-  ;; concatenating the items, we explicitly copy them into a vector.
-  ;;
-  ;; We eagerly realize the results to avoid the stack abuse given by the naive
-  ;; lazy seq recursive concat approach, as well as to reduce the chance of
-  ;; drive mutations affecting the results.
-  (let [request (some-> (build-drive-service google-ctx)
-                        .files
-                        .list
-                        (.setQ query))
-        results (transient [])]
-    request
-    #_(loop []
-        (let [response (.execute request)]
-          (doseq [file (.getItems response)]
-            (conj! results file))
-          (when-let [page-token (.getNextPageToken response)]
-            (.setPageToken request page-token)
-            (recur))))
-    #_(persistent! results)))
-
-#_(t/ann get-files [cred/GoogleCtx File -> (t/Vec File)])
-#_(defn get-files
-  "Returns a seq of files in the given folder"
-  [google-ctx folder]
-  (query-files google-ctx
-               (str "'" (.getId folder) "' in parents and trashed=false")))
-
-#_(t/ann folder? [File -> Boolean])
-#_(defn folder?
-  "Returns true if the file is a folder"
-  [file]
-  (= "application/vnd.google-apps.folder" (.getMimeType file)))
-
-#_(t/ann folder-seq [cred/GoogleCtx File -> (t/Seq File)])
-#_(defn folder-seq
-  "Returns a lazy seq of all files in the given folder, including itself, via a
-   depth-first traversal"
-  [google-ctx folder]
-  (tree-seq folder? (partial get-files google-ctx) folder))
-
-#_(t/ann get-root-files [cred/GoogleCtx -> (t/Vec File)])
-#_(defn get-root-files
-  "Given a google-ctx configuration map, gets a seq of files from the user's
-   root folder"
-  [google-ctx]
-  (query-files google-ctx "'root' in parents and trashed=false"))
-
-#_(t/ann get-file [cred/GoogleCtx String -> File])
-#_(defn get-file
-  "Given a google-ctx configuration map and the id of the desired
-  file as a string, returns that file as a drive File object"
-  [google-ctx file-id]
-  (let [drive-service (build-drive-service google-ctx)
-        drive-files (doto (.files ^Drive drive-service)
-                      assert)
-        get-file (doto (.get drive-files file-id)
-                   assert)]
-    (cast File (doto (.execute get-file)
-                 assert))))
-
-#_(t/ann upload-file [cred/GoogleCtx java.io.File String String String String -> File])
-#_(defn upload-file
-  "Given a google-ctx configuration map, a file to upload, an ID of
-   the parent folder you wish to insert the file in, the title of the
-   Drive file, the description of the Drive file, and the MIME type of
-   the file, builds a Drive Service and inserts this file into Google
-   Drive with permissions of the folder it's inserted into. The owner
-   is whomever owns the Credentials used to make the Drive Service"
-  [google-ctx file parent-folder-id file-title file-description media-type]
-  (let [drive-service (build-drive-service google-ctx)
-        parent-folder (doto (ParentReference.)
-                        (.setId parent-folder-id))
-        drive-file (doto (File.)
-                     (.setTitle file-title)
-                     (.setDescription file-description)
-                     (.setMimeType media-type)
-                     (.setParents (vector parent-folder)))
-        media-content (FileContent. media-type file)
-        drive-files (doto (.files ^Drive drive-service)
-                     assert)
-        drive-file (doto (.insert drive-files drive-file media-content)
-                     assert
-                     (.setConvert true))]
-    (cast File (doto (.execute drive-file)
-                 assert))))
-
-#_(t/ann create-blank-file [cred/GoogleCtx String String String String -> File])
-#_(defn create-blank-file
-  "Given a google-ctx configuration map, an ID of the parent folder you
-   wish to insert the file in, the title of the Drive file, the description
-   of the Drive file, and the MIME type of the file(which will be converted
-   into a google file type, builds a Drive Service and inserts a blank file
-   into Google Drive with permissions of the folder it's inserted into. The
-   owner is whomever owns the Credentials used to make the Drive Service"
-  [google-ctx parent-folder-id file-title file-description media-type]
-  (let [file (doto (java.io.File/createTempFile "temp" "temp")
-               assert)]
-    (upload-file google-ctx file parent-folder-id file-title file-description media-type)))
-
-#_(t/ann download-file [cred/GoogleCtx String String -> String])
-#_(defn download-file
-  "Given a google-ctx configuration map, a file id to download,
-   and a media type, download the drive file and then read it in
-   and return the result of reading the file"
-  [google-ctx file-id media-type]
-  (let [drive-service (build-drive-service google-ctx)
-        files (doto (.files ^Drive drive-service)
-                assert)
-        files-get (doto (.get files file-id)
-                    assert)
-        file (cast File (doto (.execute files-get)
-                          assert))
-        http-request (doto (.getRequestFactory ^Drive drive-service)
-                       assert)
-        export-link (doto (.getExportLinks ^File file)
-                      assert)
-        generic-url (GenericUrl. ^String (doto (cast String (get export-link media-type))
-                                                         assert))
-        get-request (doto (.buildGetRequest http-request generic-url)
-                      assert)
-        response (doto (.execute get-request)
-                   assert)
-        input-stream (doto (.getContent response)
-                       assert)]
-    (slurp input-stream)))
-
-#_(t/ann delete-file [cred/GoogleCtx String -> File])
-#_(defn delete-file
-  "Given a google-ctx configuration map, and a file
-   id to delete, moves that file to the trash"
-  [google-ctx file-id]
-  (let [drive-service (build-drive-service google-ctx)
-        files (doto (.files ^Drive drive-service)
-                assert)
-        delete-request (doto (.trash files file-id)
-                         assert)]
-    (cast File (doto (.execute delete-request)
-                 assert))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; File Edits ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-#_(t/ann update-file-title [cred/GoogleCtx String String -> File])
-#_(defn update-file-title
-  "Given a google-ctx configuration map, a file id, and a title,
-   updates the title of the given file to the given title."
-  [google-ctx file-id title]
-  (let [drive-service (build-drive-service google-ctx)
-        files (doto (.files ^Drive drive-service)
-                assert)
-        files-get (doto (.get files file-id)
-                    assert)
-        file (cast File (doto (.execute files-get)
-                          assert))
-        file (doto (.setTitle ^File file title)
-               assert)
-        update-request (doto (.update files file-id file)
-                         assert)]
-    (cast File (doto (.execute update-request)
-                 assert))))
-
-#_(t/ann update-file-description [cred/GoogleCtx String String -> File])
-#_(defn update-file-description
-  "Given a google-ctx configuration map, a file id, and a description,
-   updates the description of the given file to the given description."
-  [google-ctx file-id description]
-  (let [drive-service (build-drive-service google-ctx)
-        files (doto (.files ^Drive drive-service)
-                assert)
-        files-get (doto (.get files file-id)
-                    assert)
-        file (cast File (doto (.execute files-get)
-                          assert))
-        file (doto (.setDescription ^File file description)
-               assert)
-        update-request (doto (.update files file-id file)
-                         assert)]
-    (cast File (doto (.execute update-request)
-                 assert))))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;; File Properties Management ;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-#_(t/ann get-properties [cred/GoogleCtx String -> (t/Seq Property)])
-#_(defn get-properties
-  "Given a google-ctx configuration map, and a file id, returns a
-   list of all Properties associated with this file"
-  [google-ctx file-id]
-  (let [drive-service (build-drive-service google-ctx)
-        properties (doto (.properties ^Drive drive-service)
-                     assert)
-        all-properties (doto (.list properties file-id)
-                         assert)
-        properties (cast PropertyList (doto (.execute all-properties)
-                                        assert))]
-    (tu/ignore-with-unchecked-cast
-     (.getItems ^PropertyList properties)
-     (t/Seq Property))))
-
-#_(t/ann update-property [cred/GoogleCtx String String String String -> Property])
-#_(defn update-property
-  "Given a google-ctx configuration map, a file id, a key, a value, and
-   a visibility(public or private) updates the property on this file to
-   the new value if a property with the given key already exists, otherwise
-   create a new one with this key value pair"
-  [google-ctx file-id key value visibility]
-  (let [drive-service (build-drive-service google-ctx)
-        properties (doto (.properties ^Drive drive-service)
-                     assert)
-        property (doto (Property.)
-                   (.setKey key)
-                   (.setValue value)
-                   (.setVisibility visibility))
-        update-request (doto (.update properties file-id key property)
-                         assert
-                         (.setVisibility visibility))]
-    (cast Property (doto (.execute update-request)
-                     assert))))
-
-#_(t/ann delete-property [cred/GoogleCtx String String String -> t/Any])
-#_(defn delete-property
-  "Given a google-ctx configuration map, a file id, and a key,
-   deletes the property on this file associated with this key"
-  [google-ctx file-id key visibility]
-  (let [drive-service (build-drive-service google-ctx)
-        properties (doto (.properties ^Drive drive-service)
-                     assert)
-        delete-request (doto (.delete properties file-id key)
-                         assert
-                         (.setVisibility visibility))]
-    (.execute delete-request)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;; File Permissions Management ;;;;;;;;;;;;;;;;;;;;;;;;;;
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
-#_(t/ann get-permissions [cred/GoogleCtx String -> (t/Seq Permission)])
-#_(defn get-permissions
-  "Given a google-ctx configuration map, and a file-id, gets all of the
-   permissions for the given file"
-  [google-ctx file-id]
-  (let [drive-service (build-drive-service google-ctx)
-        permissions (doto (.permissions ^Drive drive-service)
-                     assert)
-        all-permissions (doto (.list permissions file-id)
-                          assert)
-        permissions (cast PermissionList (doto (.execute all-permissions)
-                                           assert))]
-    (tu/ignore-with-unchecked-cast
-     (.getItems ^PermissionList permissions)
-     (t/Seq Permission))))
-
-#_(t/ann update-permission [cred/GoogleCtx String String String -> Permission])
-#_(defn update-permission
-  "Given a google-ctx configuration map, a file-id, an email address of the
-   user who's permissions we are editing, and a new role for the user on this
-   file(reader or writer, owner is not currently supported), adds or edits the
-   permissions for this user on the given file"
-  [google-ctx file-id email new-role]
-  (let [drive-service (build-drive-service google-ctx)
-        permissions (doto (.permissions ^Drive drive-service)
-                      assert)
-        permissions-for-file (tu/ignore-with-unchecked-cast
-                              (set (map #(get % "emailAddress")
-                                        (get-permissions google-ctx file-id)))
-                              (t/Set String))
-        id-request (doto (.getIdForEmail permissions email)
-                        assert)
-        permission-id (cast PermissionId (doto (.execute id-request)
-                                              assert))
-        permission-id (doto (.getId ^PermissionId permission-id)
-                        assert)
-        permission (doto (Permission.)
-                     (.setEmailAddress email)
-                     (.setRole new-role)
-                     (.setId permission-id)
-                     (.setType "user"))
-        request (if (contains? permissions-for-file email)
-                  (doto (.update permissions file-id permission-id permission)
-                    assert)
-                  (doto (.insert permissions file-id permission)
-                    assert))]
-    (tu/ignore-with-unchecked-cast (.execute request)
-                                   Permission)))
-
-#_(t/ann remove-permission [cred/GoogleCtx String String -> t/Any])
-#_(defn remove-permission
-  "Given a google-ctx configuration map, a file-id, and  an email address
-   of the user who's permissions we are editing, removes this user from
-   the permissions of the given file"
-  [google-ctx file-id email]
-  (let [drive-service (build-drive-service google-ctx)
-        permissions (doto (.permissions ^Drive drive-service)
-                      assert)
-        permissions-for-file (tu/ignore-with-unchecked-cast
-                              (set (map #(get % "emailAddress")
-                                        (get-permissions google-ctx file-id)))
-                              (t/Set String))
-        id-request (doto (.getIdForEmail permissions email)
-                        assert)
-        permission-id (cast PermissionId (doto (.execute id-request)
-                                              assert))
-        permission-id (doto (.getId ^PermissionId permission-id)
-                        assert)
-        delete-request (doto (.delete permissions file-id permission-id)
-                         assert)]
-    (if (contains? permissions-for-file email)
-      (.execute delete-request))))

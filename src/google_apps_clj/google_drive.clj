@@ -349,14 +349,11 @@
   Drive$Files$List
   (next-page! [request response]
     (when response
-      (let [response (t/cast FileList response)
-            page-token (.getNextPageToken ^FileList response)]
-        (when page-token
-          (.setPageToken request page-token)))))
+      (when-let [page-token (.getNextPageToken ^FileList response)]
+        (.setPageToken request page-token))))
   (response-data [request response]
     (when response
-      (let [response (t/cast FileList response)]
-        (.getItems ^FileList response))))
+      (.getItems ^FileList response)))
 
   Drive$Files$Update
   (next-page! [request response])
@@ -375,8 +372,9 @@
 
   Drive$Permissions$List
   (next-page! [request response])
-  (response-data [request ^PermissionList response]
-    (.getItems response))
+  (response-data [request response]
+    (when response
+      (.getItems ^PermissionList response)))
 
   Drive$Permissions$Update
   (next-page! [request response])

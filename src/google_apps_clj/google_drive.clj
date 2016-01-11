@@ -197,6 +197,11 @@
               (partition 2 forms))
        ~gx)))
 
+(t/ann root-id t/Str)
+(def root-id
+  "The id of the root folder"
+  "root")
+
 (t/ann build-file [(t/U FileInsertQuery FileUpdateQuery) -> File])
 (defn- ^File build-file
   [query]
@@ -800,27 +805,36 @@
   [file]
   (= folder-mime-type (:mime-type file)))
 
-(defn resolve-file-id!
-  "Given a seq of titles relative to the root folder, returns the file id if
-   there is one. If any title matches more than one folder, this raises an
-   error."
-  [google-ctx path]
-  (when (seq path)
-    (loop [folder-id "root"
-           [title & path'] path]
-      (let [q (format "'%s' in parents and title = '%s'" folder-id title)
-            query {:model :files
-                   :action :list
-                   :fields [:id]
-                   :query q}
-            results (execute-query! google-ctx query)
-            total (count results)]
-        (when (seq results)
-          (when (seq (rest results))
-            (let [msg (format "Can't resolve path %s, too many matches for %s"
-                              (pr-str path) title)]
-              (throw (IllegalStateException. msg))))
-          (let [id (:id (first results))]
-            (if (seq path')
-              (recur id path')
-              id)))))))
+(defn find-file!
+  "Given a path as a seq of titles relative to the given folder id,
+   returns the file if there is one. If any title matches more than one
+   file, this raises an error. If the fields are specified, they
+   specify the attributes requested of the ultimate file, otherwise the
+   defaults are used."
+  ([google-ctx parent-id path]
+   (find-file! google-ctx parent-id path nil))
+  ([google-ctx parent-id path fields]
+   (when (seq path)
+     (loop [folder-id parent-id
+            [title & path'] path]
+       (let [q (format "'%s' in parents and title = '%s' and trashed=false"
+                       folder-id title)
+             fields (if (seq path')
+                      [:id]
+                      fields)
+             query (cond-> {:model :files
+                            :action :list
+                            :query q}
+                     (seq fields)
+                     (assoc :fields fields))
+             results (execute-query! google-ctx query)
+             total (count results)]
+         (when (seq results)
+           (when (seq (rest results))
+             (let [msg (format "Can't resolve path %s, too many matches for %s"
+                               (pr-str path) title)]
+               (throw (IllegalStateException. msg))))
+           (let [file (first results)]
+             (if (seq path')
+               (recur (:id file) path')
+               file))))))))

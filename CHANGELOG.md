@@ -1,5 +1,9 @@
 # google-apps-clj changes
 
+## In-progress
+
+* Rename resolve-file-id! to find-file!, change semantics
+
 ## 0.3.1
 
 * Downgrade core.typed to 0.3.14

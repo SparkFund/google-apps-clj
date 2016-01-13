@@ -1,6 +1,6 @@
 # google-apps-clj changes
 
-## In-progress
+## 0.3.2
 
 * Rename resolve-file-id! to find-file!, change semantics
 

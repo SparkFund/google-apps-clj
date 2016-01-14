@@ -16,15 +16,17 @@
            (com.google.api.client.json JsonFactory)
            (com.google.api.client.json.jackson2 JacksonFactory)))
 
-(t/defalias GoogleCtx '{:client-id String
-                        :client-secret String
-                        :redirect-uris '[String]
-                        :auth-map '{:access-token String
-                                    :expires-in Number
-                                    :refresh-token String
-                                    :token-type String}
-                        :connect-timeout (t/Option Long)
-                        :read-timeout (t/Option Long)})
+(t/defalias GoogleCtx
+  (t/HMap :mandatory {:client-id t/Str
+                      :client-secret t/Str
+                      :redirect-uris (t/Vec t/Str)
+                      :auth-map (t/HMap :mandatory {:access-token t/Str
+                                                    :expires-in t/AnyInteger
+                                                    :refresh-token t/Str
+                                                    :token-type t/Str}
+                                        :complete? true)}
+          :optional {:connect-timeout t/AnyInteger
+                     :read-timeout t/AnyInteger}))
 
 (t/non-nil-return com.google.api.client.json.jackson2.JacksonFactory/getDefaultInstance :all)
 (t/non-nil-return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport/newTrustedTransport :all)

@@ -1,5 +1,9 @@
 # google-apps-clj changes
 
+## 0.3.3
+
+* Fix GoogleCtx type
+
 ## 0.3.2
 
 * Rename resolve-file-id! to find-file!, change semantics

@@ -14,13 +14,15 @@
            (com.google.api.client.json JsonFactory)
            (com.google.api.client.json.jackson2 JacksonFactory)))
 
+(t/defalias AuthMap '{:access-token  String
+                      :expires-in    Number
+                      :refresh-token String
+                      :token-type    String})
+
 (t/defalias GoogleCtx '{:client-id       String
                         :client-secret   String
                         :redirect-uris   '[String]
-                        :auth-map        '{:access-token  String
-                                           :expires-in    Number
-                                           :refresh-token String
-                                           :token-type    String}
+                        :auth-map        AuthMap
                         :connect-timeout (t/Option Long)
                         :read-timeout    (t/Option Long)
                         :access-type     (t/Option String)
@@ -48,7 +50,6 @@
                         (.setInstalled details))]
     google-secret))
 
-(t/ann get-user-auth-code [GoogleCtx -> GoogleClientSecrets])
 (defn- get-user-auth-code [google-ctx scope]
   (let [baseurl "https://accounts.google.com/o/oauth2/v2/auth"
         code "response_type=code"
@@ -67,6 +68,7 @@
              (fn [[key val]] [(keyword (clojure.string/replace (name key) "_" "-")) val])
              map-in)))
 
+(t/ann get-auth-map [GoogleCtx -> AuthMap])
 (defn get-auth-map
   "Given a google-ctx configuration map, and a list of scopes(as strings),
    creates a URL for the user to receive their auth-code, which is then used
@@ -84,6 +86,7 @@
       (underscore-to-dash-in-keys (json/read-json (:body response)))
       (println "Authentication request failed, dumping response:" response))))
 
+(t/ann refresh-google-token [GoogleCtx -> AuthMap])
 (defn refresh-google-token [google-ctx]
   (let [base-url "https://www.googleapis.com/oauth2/v4/token"
         body {:refresh_token (get-in google-ctx [:auth-map :refresh-token])

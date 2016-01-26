@@ -19,7 +19,7 @@
                                         :expires-in    t/AnyInteger
                                         :refresh-token t/Str
                                         :token-type    t/Str}
-                            :complete? true)
+                            :complete? true))
 
 (t/defalias GoogleCtx
   (t/HMap :mandatory {:client-id     t/Str

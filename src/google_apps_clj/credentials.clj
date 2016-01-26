@@ -1,13 +1,11 @@
 (ns google-apps-clj.credentials
   "A library used to set up Google OAuth 2 credentials"
   (:require [clojure.core.typed :as t]
-            [clojure.edn :as edn :only [read-string]])
-  (:import (com.google.api.client.auth.oauth2 Credential
-                                              TokenResponse)
-           (com.google.api.client.googleapis.auth.oauth2 GoogleAuthorizationCodeFlow$Builder
-                                                         GoogleClientSecrets
+            [clojure.edn :as edn :only [read-string]]
+            [clojure.data.json :as json]
+            [org.httpkit.client :as http])
+  (:import (com.google.api.client.googleapis.auth.oauth2 GoogleClientSecrets
                                                          GoogleClientSecrets$Details
-                                                         GoogleCredential
                                                          GoogleCredential$Builder
                                                          GoogleTokenResponse)
            (com.google.api.client.googleapis.javanet GoogleNetHttpTransport)
@@ -17,16 +15,19 @@
            (com.google.api.client.json.jackson2 JacksonFactory)))
 
 (t/defalias GoogleCtx
-  (t/HMap :mandatory {:client-id t/Str
+  (t/HMap :mandatory {:client-id     t/Str
                       :client-secret t/Str
                       :redirect-uris (t/Vec t/Str)
-                      :auth-map (t/HMap :mandatory {:access-token t/Str
-                                                    :expires-in t/AnyInteger
-                                                    :refresh-token t/Str
-                                                    :token-type t/Str}
-                                        :complete? true)}
+                      :auth-map      (t/HMap :mandatory {:access-token  t/Str
+                                                         :expires-in    t/AnyInteger
+                                                         :refresh-token t/Str
+                                                         :token-type    t/Str}
+                                             :complete? true)}
           :optional {:connect-timeout t/AnyInteger
-                     :read-timeout t/AnyInteger}))
+                     :read-timeout    t/AnyInteger
+                     :access-type     t/Str
+                     :redirect-uri    t/Str}))
+
 
 (t/non-nil-return com.google.api.client.json.jackson2.JacksonFactory/getDefaultInstance :all)
 (t/non-nil-return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport/newTrustedTransport :all)
@@ -50,31 +51,52 @@
                         (.setInstalled details))]
     google-secret))
 
-(t/ann get-auth-map [GoogleCtx (java.util.Collection String) -> TokenResponse])
+(t/ann get-user-auth-code [GoogleCtx -> GoogleClientSecrets])
+(defn- get-user-auth-code [google-ctx scope]
+  (let [baseurl "https://accounts.google.com/o/oauth2/v2/auth"
+        code "response_type=code"
+        scope (str "scope=" (clojure.string/join "%20" scope))
+        client-id (str "client_id=" (:client-id google-ctx))
+        acc-type (str "access_type=" (:access-type google-ctx "offline"))
+        redirect_uri (str "redirect_uri=" (:redirect-uri google-ctx "urn:ietf:wg:oauth:2.0:oob"))
+        args (str "?" code "&" scope "&" client-id "&" acc-type "&" redirect_uri)
+        auth-url (str baseurl args)]
+    (println "Please visit the following url and input the code "
+             "that appears on the screen: " auth-url)
+    (read-line)))
+
+(defn- underscore-to-dash-in-keys [map-in]
+  (into {} (map
+             (fn [[key val]] [(keyword (clojure.string/replace (name key) "_" "-")) val])
+             map-in)))
+
 (defn get-auth-map
   "Given a google-ctx configuration map, and a list of scopes(as strings),
    creates a URL for the user to receive their auth-code, which is then used
    to receive an authorization map, which the user should store securely"
   [google-ctx scope]
-  (let [google-secret (get-google-secret google-ctx)
-        auth-flow-builder (doto (GoogleAuthorizationCodeFlow$Builder. http-transport json-factory
-                                                                      google-secret scope)
-                            (.setAccessType "offline"))
-        auth-flow (doto (.build auth-flow-builder)
-                    assert)
-        auth-request-url (doto (.newAuthorizationUrl auth-flow)
-                           assert
-                           (.setRedirectUri "urn:ietf:wg:oauth:2.0:oob"))
-        auth-url (.build auth-request-url)
-        _ (println "Please visit the following url and input the code "
-                   "that appears on the screen: " auth-url)
-        auth-code (doto (read-line)
-                    assert)
-        token-request (doto (.newTokenRequest auth-flow auth-code)
-                        assert
-                        (.setRedirectUri "urn:ietf:wg:oauth:2.0:oob"))]
-    (doto (.execute token-request)
-      assert)))
+  (let [base-url "https://www.googleapis.com/oauth2/v4/token"
+        auth-code (get-user-auth-code google-ctx scope)
+        body {:code          auth-code
+              :client_id     (:client-id google-ctx)
+              :client_secret (:client-secret google-ctx)
+              :grant_type    "authorization_code"
+              :redirect_uri  (:redirect-uri google-ctx "urn:ietf:wg:oauth:2.0:oob")}
+        response (deref (http/post base-url {:form-params body}) 5000 {:status "TIMEOUT AFTER 5 SECONDS"})]
+    (if (= 200 (:status response))
+      (underscore-to-dash-in-keys (json/read-json (:body response)))
+      (println "Authentication request failed, dumping response:" response))))
+
+(defn refresh-google-token [google-ctx]
+  (let [base-url "https://www.googleapis.com/oauth2/v4/token"
+        body {:refresh_token (get-in google-ctx [:auth-map :refresh-token])
+              :client_id     (:client-id google-ctx)
+              :client_secret (:client-secret google-ctx)
+              :grant_type    "refresh_token"}
+        response (deref (http/post base-url {:form-params body}) 5000 {:status "TIMEOUT AFTER 5 SECONDS"})]
+    (if (= 200 (:status response))
+      (underscore-to-dash-in-keys (json/read-json (:body response)))
+      (println "Token refresh request failed, dumping response:" response))))
 
 (t/ann get-token-response [GoogleCtx -> GoogleTokenResponse])
 (defn get-token-response

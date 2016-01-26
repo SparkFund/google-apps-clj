@@ -84,6 +84,17 @@
       (underscore-to-dash-in-keys (json/read-json (:body response)))
       (println "Authentication request failed, dumping response:" response))))
 
+(defn refresh-google-token [google-ctx]
+  (let [base-url "https://www.googleapis.com/oauth2/v4/token"
+        body {:refresh_token (get-in google-ctx [:auth-map :refresh-token])
+              :client_id     (:client-id google-ctx)
+              :client_secret (:client-secret google-ctx)
+              :grant_type    "refresh_token"}
+        response (deref (http/post base-url {:form-params body}) 5000 {:status "TIMEOUT AFTER 5 SECONDS"})]
+    (if (= 200 (:status response))
+      (underscore-to-dash-in-keys (json/read-json (:body response)))
+      (println "Token refresh request failed, dumping response:" response))))
+
 (t/ann get-token-response [GoogleCtx -> GoogleTokenResponse])
 (defn get-token-response
   "Given a google-ctx configuration map, creates a GoogleTokenResponse Object

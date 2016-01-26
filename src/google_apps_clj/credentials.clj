@@ -90,15 +90,19 @@
       (println "Authentication request failed, dumping response:" response))))
 
 (t/ann refresh-google-token [GoogleCtx -> AuthMap])
-(defn refresh-google-token [google-ctx]
+(defn refresh-google-token
+  "Given a google-ctx configuration map containing a refresh token in the :auth-map,
+   returns an updated :auth-map with a refreshed access-token."
+  [google-ctx]
   (let [base-url "https://www.googleapis.com/oauth2/v4/token"
-        body {:refresh_token (get-in google-ctx [:auth-map :refresh-token])
+        refresh-token (get-in google-ctx [:auth-map :refresh-token])
+        body {:refresh_token refresh-token
               :client_id     (:client-id google-ctx)
               :client_secret (:client-secret google-ctx)
               :grant_type    "refresh_token"}
         response (deref (http/post base-url {:form-params body}) 5000 {:status "TIMEOUT AFTER 5 SECONDS"})]
     (if (= 200 (:status response))
-      (underscore-to-dash-in-keys (json/read-json (:body response)))
+      (assoc (underscore-to-dash-in-keys (json/read-json (:body response))) :refresh-token refresh-token)
       (println "Token refresh request failed, dumping response:" response))))
 
 (t/ann get-token-response [GoogleCtx -> GoogleTokenResponse])

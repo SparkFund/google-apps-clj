@@ -135,3 +135,17 @@
     (tu/ignore-with-unchecked-cast (doto (.getItems days-events)
                                      assert)
                                    (t/Seq Event))))
+
+(t/ann delete-calendar-event [cred/GoogleCtx String   -> Any])
+(defn  delete-calendar-event [google-ctx     event-id]
+  "Given a google-ctx configuration map, and an event ID, remove that 
+  the calendar event of that ID"
+  (let [calendar-service (build-calendar-service google-ctx)
+       events (doto (.events ^ Calendar calendar-service)
+                 assert)
+       delete-request (doto (.delete events "primary" event-id)
+                         assert)        
+   ]
+
+   (do (.execute delete-request))
+))

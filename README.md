@@ -30,15 +30,15 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 1. Get and store credentials locally 
     1. Copy the template [google-creds.edn file](https://github.com/dunn-mat/google-apps-clj/blob/master/config/google-creds.edn.template)
     1. Put your *Client ID* and *Client Secret* into `google-creds.edn`. You will use the data in this file for getting the rest of your credententials and for the other APIs.
-    1. Generate `auth_map` by following the instructions given after executing
-   ```clojure
+    1. Generate `auth_map` 
+    ```clojure
    (def scopes ["https://www.googleapis.com/auth/calendar"])
    (-> "google-cres.edn" 
        slurp 
        clojure.edn/read-string 
        (google-apps-clj.credentials/get-auth-map scopes))
-   ```
-  scopes can include e.g. `["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"]`
+    ```
+    scopes can include e.g. `["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"]`
     1. Copy the returned data into your `google-creds.edn` file under the `:auth-map` key. N.B. keys should _not_ be quoted and should contain `-` not `_`. 
 
 1. Test your configuration

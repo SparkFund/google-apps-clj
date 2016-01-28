@@ -32,13 +32,13 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
     1. Put your *Client ID* and *Client Secret* into `google-creds.edn`. You will use the data in this file for getting the rest of your credententials and for the other APIs.
     1. Generate `auth_map` 
     ```clojure
+   ;(def scopes  ["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"] )
    (def scopes ["https://www.googleapis.com/auth/calendar"])
    (-> "google-cres.edn" 
        slurp 
        clojure.edn/read-string 
        (google-apps-clj.credentials/get-auth-map scopes))
     ```
-    scopes can include e.g. `["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"]`
     1. Copy the returned data into your `google-creds.edn` file under the `:auth-map` key. N.B. keys should _not_ be quoted and should contain `-` not `_`. 
 
 1. Test your configuration
@@ -89,8 +89,12 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 * Listing upcoming events with a supplied name (for user)
 * Creating an event with a certain time range
 * Creating an all day event
+* Deleting event by ID
 
 ## What's Next?
+
+* Retrieve single event by ID
+* Update event by ID
 
 #### General
 
@@ -98,6 +102,7 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
   user-account OAuth funkiness
 * Consider ditching the baroque Google java library in favor of
   direct integration with the api using clj-http or the like
+* Mitigate "WARNING: Application name is not set. Call Builder#setApplicationName."
 
 #### Drive API
 * Consider making file maps the unit of work for the command fns

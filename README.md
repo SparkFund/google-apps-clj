@@ -21,19 +21,40 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 ### Obtaining OAuth 2 Credentials
 
-1. Log in to Google using the account you wish the credentials to be under
-2. Navigate to the [Developer's Console](https://console.developers.google.com)
-3. Create a project and name it appropriately
-4. Navigate to Credentials and click *Create new Client ID* under OAuth. Choose "Installed application" and set up a consent screen if necessary.
-5. Create a [google-creds.edn file](https://github.com/dunn-mat/google-apps-clj/blob/master/config/google-creds.edn.template)
-6. Copy the Client ID, Client Secret, and Redirect URIs into your google-creds.edn. You will use the data in this file for getting the rest of your credententials and for the other APIs.
-7. Read in your google-creds.edn file like so:
+1. Create a new OAuth credential 
+    1. Navigate to the [Developer's Console](https://console.developers.google.com)
+    2. Create a project and name it appropriately
+    3. Navigate to `Dashboard > API > Credentials` 
+    4. Click *New Credentials* > *OAuth Client ID*. Choose "Other" 
+    5. Note *Client ID* and *Client Secret* 
+1. Get and store credentials locally 
+    1. Copy the template [google-creds.edn file](https://github.com/dunn-mat/google-apps-clj/blob/master/config/google-creds.edn.template)
+    1. Put your *Client ID* and *Client Secret* into `google-creds.edn`. You will use the data in this file for getting the rest of your credententials and for the other APIs.
+    1. Generate `auth_map` 
+    ```clojure
+   ;(def scopes  ["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"] )
+   (def scopes ["https://www.googleapis.com/auth/calendar"])
+   (-> "google-cres.edn" 
+       slurp 
+       clojure.edn/read-string 
+       (google-apps-clj.credentials/get-auth-map scopes))
+    ```
+    1. Copy the returned data into your `google-creds.edn` file under the `:auth-map` key. N.B. keys should _not_ be quoted and should contain `-` not `_`. 
 
-     `(edn/read-string (slurp "config/matt-google-creds.edn"))`
-
-8. Call google-apps-clj.credentials/get-auth-map on this, along with the necessary scopes (eg `["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"]`), and read in data and follow its instructions
-9. Copy the returned data into your google-creds.edn file under the `:auth-map` key. Reload it into your REPL.
-10. You are now ready to use the other APIs with your credential file
+1. Test your configuration
+     ```clojure
+     ; load credentials now with auth_map completed
+     (def google-ctx 
+       (-> "google-creds.edn" 
+       slurp 
+       clojure.edn/read-string ))
+      ; add an event to the calendar
+      (def gev 
+         (google-apps-clj.google-calendar/add-calendar-time-event 
+           google-ctx "title" "desc" "loc" 
+           "2016-01-27T12:00:00" "2016-01-27T14:00:00" [] ))
+      ```
+ 
 
 ### Drive API
 
@@ -68,8 +89,12 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 * Listing upcoming events with a supplied name (for user)
 * Creating an event with a certain time range
 * Creating an all day event
+* Deleting event by ID
 
 ## What's Next?
+
+* Retrieve single event by ID
+* Update event by ID
 
 #### General
 
@@ -77,6 +102,7 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
   user-account OAuth funkiness
 * Consider ditching the baroque Google java library in favor of
   direct integration with the api using clj-http or the like
+* Mitigate "WARNING: Application name is not set. Call Builder#setApplicationName."
 
 #### Drive API
 * Consider making file maps the unit of work for the command fns

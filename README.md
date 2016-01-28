@@ -24,14 +24,14 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 1. Create a new OAuth credential 
     1. Navigate to the [Developer's Console](https://console.developers.google.com)
     2. Create a project and name it appropriately
-    3. Navigate to Dashboard -> API -> Credentials 
-    4. Click *New Credentials* -> *OAuth Client ID*. Choose "Other" 
+    3. Navigate to `Dashboard > API > Credentials` 
+    4. Click *New Credentials* > *OAuth Client ID*. Choose "Other" 
     5. Note *Client ID* and *Client Secret* 
 1. Get and store credentials locally 
     1. Copy the template [google-creds.edn file](https://github.com/dunn-mat/google-apps-clj/blob/master/config/google-creds.edn.template)
     1. Put your *Client ID* and *Client Secret* into `google-creds.edn`. You will use the data in this file for getting the rest of your credententials and for the other APIs.
-    1. Generate `auth_map` by folling the instructions given after executing
-   ```
+    1. Generate `auth_map` by following the instructions given after executing
+   ```clojure
    (def scopes ["https://www.googleapis.com/auth/calendar"])
    (-> "google-cres.edn" 
        slurp 
@@ -42,7 +42,7 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
     1. Copy the returned data into your `google-creds.edn` file under the `:auth-map` key. N.B. keys should _not_ be quoted and should contain `-` not `_`. 
 
 1. Test your configuration
-     ```
+     ```clojure
      ; load credentials now with auth_map completed
      (def google-ctx 
        (-> "google-creds.edn" 

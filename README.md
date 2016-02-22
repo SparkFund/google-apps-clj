@@ -32,7 +32,7 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
      `(edn/read-string (slurp "config/matt-google-creds.edn"))`
 
-9. Call google-apps-clj.credentials/get-auth-map on this, along with the necessary scopes (eg `["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"]`), and read in data and follow its instructions
+9. Call google-apps-clj.credentials/get-auth-map on this, along with the necessary [OAuth scopes](https://developers.google.com/identity/protocols/googlescopes) (eg `["https://www.googleapis.com/auth/drive" "https://docs.google.com/feeds/" "https://spreadsheets.google.com/feeds" "https://www.googleapis.com/auth/calendar"]`), and read in data and follow its instructions
 10. Copy the returned data into your google-creds.edn file under the `:auth-map` key. Reload it into your REPL.
 11. You are now ready to use the other APIs with your credential file
 

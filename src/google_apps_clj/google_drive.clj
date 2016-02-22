@@ -223,7 +223,7 @@
 (defn- ^InputStreamContent build-stream
   [query]
   (let [{:keys [content mime-type size]} query]
-    (when (and content mime-type)
+    (when content
       (cond-doto (InputStreamContent. ^String mime-type (io/input-stream content))
         size (.setLength ^Long size)))))
 
@@ -287,9 +287,10 @@
         :insert
         (let [file (build-file query)
               stream (build-stream query)
+              convert (boolean (get-in query [:convert] true))
               request (if stream
                         (doto (.insert (.files drive) file stream)
-                          (.setConvert true))
+                          (.setConvert convert))
                         (.insert (.files drive) file))]
           (cond-doto ^DriveRequest request
             fields (.setFields fields))))
@@ -704,21 +705,29 @@
 
 (t/ann upload-file [FileId t/Str t/Str t/Str t/Any -> FileInsertQuery])
 (defn upload-file
-  [folder-id title description mime-type content]
-  {:model :files
-   :action :insert
-   :parent-ids [folder-id]
-   :title title
-   :description description
-   :mime-type mime-type
-   :content content})
+  ([folder-id title description mime-type content]
+   (upload-file folder-id title description mime-type content nil))
+  ([folder-id title description mime-type content convert-to-gdocs]
+   {:model       :files
+    :action      :insert
+    :parent-ids  [folder-id]
+    :title       title
+    :description description
+    :mime-type   mime-type
+    :convert     (cond
+                   (= true convert-to-gdocs) true
+                   (= false convert-to-gdocs) false
+                   :else (some? mime-type))
+    :content     content}))
 
 (defn upload-file!
   "Uploads a file with the given title, description, type, and content into
    the given folder"
-  [google-ctx folder-id title description mime-type content]
-  (execute-query! google-ctx
-                  (upload-file folder-id title description mime-type content)))
+  ([google-ctx folder-id title description mime-type content]
+   (upload-file! google-ctx folder-id title description mime-type content true))
+  ([google-ctx folder-id title description mime-type content convert-to-gdocs]
+   (execute-query! google-ctx
+                   (upload-file folder-id title description mime-type content convert-to-gdocs))))
 
 (defn download-file!
   "Downloads the contents of the given file as an inputstream, or nil if the

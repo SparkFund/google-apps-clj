@@ -88,27 +88,54 @@
       (.setRefreshToken (:refresh-token auth-map))
       (.setTokenType (:token-type auth-map)))))
 
+(defn ^GoogleCredential credential-with-scopes
+  "Creates a copy of the given credential, with the specified scopes attached.
+  `scopes` should be a list or vec of one or more Strings"
+  [^GoogleCredential cred, scopes]
+  (.createScoped cred (set scopes)))
+
+(defn ^GoogleCredential default-credential
+  "Gets the default credential as configured by the GOOGLE_APPLICATION_CREDENTIALS environment variable
+  (see https://developers.google.com/identity/protocols/application-default-credentials)
+  Optionally you may specify a collection (list/vec/set) of string scopes to attach to the credential"
+  ([]
+   (GoogleCredential/getApplicationDefault))
+  ([scopes]
+   (credential-with-scopes (default-credential) (set scopes))))
+
 (t/ann ^:no-check build-credential [GoogleCtx -> HttpRequestInitializer])
 (defn build-credential
   "Given a google-ctx configuration map, builds a GoogleCredential Object from
-   the token response and google secret created from those respective methods."
+   the token response and google secret created from those respective methods.
+   If the provided configuration map is the keyword `:default`, this will return the default
+   credential as configured by the GOOGLE_APPLICATION_CREDENTIALS environment variable
+   (see https://developers.google.com/identity/protocols/application-default-credentials)"
   [google-ctx]
-  (let [token-response (get-token-response google-ctx)
-        google-secret (get-google-secret google-ctx)
-        credential-builder (doto (GoogleCredential$Builder.)
-                             (.setTransport http-transport)
-                             (.setJsonFactory json-factory)
-                             (.setClientSecrets google-secret))
-        credential (doto (.build credential-builder)
-                     assert
-                     (.setFromTokenResponse token-response))
-        {:keys [connect-timeout read-timeout]} google-ctx]
-    (if (or connect-timeout read-timeout)
-      (reify HttpRequestInitializer
-        (initialize [_ request]
-          (.initialize credential request)
-          (when connect-timeout
-            (.setConnectTimeout request connect-timeout))
-          (when read-timeout
-            (.setReadTimeout request read-timeout))))
-      credential)))
+   (cond
+     ;pass through instances of GoogleCredential
+     (instance? GoogleCredential google-ctx)
+     google-ctx
+     ;allow :default keyword to allow the default
+     (= :default google-ctx)
+     (default-credential)
+     ;construct the credential from the provided context
+     :otherwise
+     (let [token-response (get-token-response google-ctx)
+           google-secret (get-google-secret google-ctx)
+           credential-builder (doto (GoogleCredential$Builder.)
+                                (.setTransport http-transport)
+                                (.setJsonFactory json-factory)
+                                (.setClientSecrets google-secret))
+           credential (doto (.build credential-builder)
+                        assert
+                        (.setFromTokenResponse token-response))
+           {:keys [connect-timeout read-timeout]} google-ctx]
+       (if (or connect-timeout read-timeout)
+         (reify HttpRequestInitializer
+           (initialize [_ request]
+             (.initialize credential request)
+             (when connect-timeout
+               (.setConnectTimeout request connect-timeout))
+             (when read-timeout
+               (.setReadTimeout request read-timeout))))
+         credential))))

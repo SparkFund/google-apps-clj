@@ -1,9 +1,9 @@
 (ns google-apps-clj.credentials
   "A library used to set up Google OAuth 2 credentials"
   (:require [clojure.core.typed :as t]
+            [clojure.java.io :as io]
             [clojure.edn :as edn :only [read-string]])
-  (:import (com.google.api.client.auth.oauth2 Credential
-                                              TokenResponse)
+  (:import (com.google.api.client.auth.oauth2 TokenResponse)
            (com.google.api.client.googleapis.auth.oauth2 GoogleAuthorizationCodeFlow$Builder
                                                          GoogleClientSecrets
                                                          GoogleClientSecrets$Details
@@ -14,7 +14,9 @@
            (com.google.api.client.http HttpTransport
                                        HttpRequestInitializer)
            (com.google.api.client.json JsonFactory)
-           (com.google.api.client.json.jackson2 JacksonFactory)))
+           (com.google.api.client.json.jackson2 JacksonFactory)
+           (java.io ByteArrayInputStream File)
+           (java.nio.charset Charset)))
 
 (t/defalias GoogleCtx
   (t/HMap :mandatory {:client-id t/Str
@@ -143,3 +145,20 @@
           (when read-timeout
             (.setReadTimeout request read-timeout))))
       credential)))
+
+(t/ann credential-from-json-stream [t/Any -> GoogleCredential])
+(defn credential-from-json-stream
+  "Consumes an input stream containing JSON describing a Google API credential
+  `stream` can be anything that can be handled by `clojure.java.io/input-stream`"
+  [stream]
+  (with-open [input-stream (io/input-stream stream)]
+    (GoogleCredential/fromStream input-stream)))
+
+(t/ann credential-from-json [t/Str -> GoogleCredential])
+(defn credential-from-json
+  "Builds a GoogleCredential from a raw JSON string describing a Google API credential"
+  [cred-json]
+  (let [charset (Charset/forName "UTF-8")
+        byte-array (.getBytes cred-json charset)
+        input-stream (new ByteArrayInputStream byte-array)]
+    (credential-from-json-stream input-stream)))

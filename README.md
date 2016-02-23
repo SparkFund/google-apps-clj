@@ -106,8 +106,6 @@ The service account user won't show up by name in searches, but it can be added 
 
 #### General
 
-* Allow service account authentication in addition to the current
-  user-account OAuth funkiness
 * Consider ditching the baroque Google java library in favor of
   direct integration with the api using clj-http or the like
 

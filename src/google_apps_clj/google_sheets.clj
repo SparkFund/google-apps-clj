@@ -20,14 +20,15 @@
                                                 SpreadsheetService
                                                 WorksheetQuery)
            (com.google.gdata.data.batch BatchOperationType
-                                        BatchUtils)))
+                                        BatchUtils)
+           (com.google.api.client.googleapis.auth.oauth2 GoogleCredential)))
 (t/ann ^:no-check clojure.java.io/as-url [t/Str -> java.net.URL])
 
 (def spreadsheet-url
   "The url needed and used to recieve a spreadsheet feed"
   (io/as-url "https://spreadsheets.google.com/feeds/spreadsheets/private/full"))
 
-(t/ann build-sheet-service [cred/GoogleCtx -> SpreadsheetService])
+(t/ann build-sheet-service [(t/U GoogleCtx GoogleCredential) -> SpreadsheetService])
 (defn build-sheet-service
   "Given a google-ctx configuration map, builds a SpreadsheetService using
    the credentials coming from google-ctx"
@@ -81,7 +82,7 @@
           (< (count entries) 1) {:error :no-spreadsheet}
           :else {:error :more-than-one-spreadsheet})))
 
-(t/ann ^:no-check file-name->ids [cred/GoogleCtx String -> (t/U '{:spreadsheet t/Map
+(t/ann ^:no-check file-name->ids [(t/U GoogleCtx GoogleCredential) String -> (t/U '{:spreadsheet t/Map
                                                                   :worksheet t/Map}
                                                                 '{:error t/Keyword})])
 (defn file-name->ids
@@ -109,7 +110,7 @@
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (t/ann create-new-worksheet
-       [cred/GoogleCtx SpreadsheetEntry Number Number String -> WorksheetEntry])
+       [(t/U GoogleCtx GoogleCredential) SpreadsheetEntry Number Number String -> WorksheetEntry])
 (defn create-new-worksheet
   "Given a google-ctx configuration map, SpreadsheetEntry, rows, columns, and
    a title, create a new worksheet for for the SpreadsheetEntry with this data"
@@ -220,7 +221,7 @@
           :else {:error :more-than-one-cell})))
 
 (t/ann ^:no-check update-cell
-       [cred/GoogleCtx String String '[Number Number String] -> (t/U CellEntry
+       [(t/U GoogleCtx GoogleCredential) String String '[Number Number String] -> (t/U CellEntry
                                                                      '{:error t/Keyword})])
 (defn update-cell
   "Given a google-ctx configuration map, the id of a spreadsheet,
@@ -247,7 +248,7 @@
         (.update sheet-service cell-url cell)))))
 
 (t/ann ^:no-check insert-row
-       [cred/GoogleCtx String String (t/Seq (t/Map String String)) -> (t/U ListEntry
+       [(t/U GoogleCtx GoogleCredential) String String (t/Seq (t/Map String String)) -> (t/U ListEntry
                                                                            '{:error t/Keyword})])
 (defn insert-row
   "Given a google-ctx configuration map, the name of a spreadsheet,
@@ -279,7 +280,7 @@
           (.insert sheet-service (:list-feed-url list-feed-url) row)))))
 
 (t/ann ^:no-check batch-update-cells
-       [cred/GoogleCtx String String (t/Seq '[Number Number String]) -> (t/U CellFeed
+       [(t/U GoogleCtx GoogleCredential) String String (t/Seq '[Number Number String]) -> (t/U CellFeed
                                                                              '{:error t/Keyword})])
 (defn batch-update-cells
   "Given a google-ctx configuration map, the id of a spreadsheet, the id of
@@ -354,7 +355,7 @@
                         (into [] (map #(get-value row %) (.getTags row)))))]
     (map print-value entries)))
 
-(t/ann ^:no-check read-worksheet [cred/GoogleCtx String String -> (t/U '{:headers (t/Vec String)
+(t/ann ^:no-check read-worksheet [(t/U GoogleCtx GoogleCredential) String String -> (t/U '{:headers (t/Vec String)
                                                                          :values (t/Seq (t/Vec String))}
                                                                        '{:error t/Keyword})])
 (defn read-worksheet
@@ -374,7 +375,7 @@
         {:headers headers :values values}))))
 
 (t/ann ^:no-check write-worksheet
-       [cred/GoogleCtx String String '{:headers (t/Vec String)
+       [(t/U GoogleCtx GoogleCredential) String String '{:headers (t/Vec String)
                                       :values (t/Seq (t/Vec String))} -> (t/U '{:error t/Keyword}
                                                                               (t/Seq CellEntry))])
 (defn write-worksheet

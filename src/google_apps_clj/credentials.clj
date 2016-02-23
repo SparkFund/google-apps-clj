@@ -88,12 +88,14 @@
       (.setRefreshToken (:refresh-token auth-map))
       (.setTokenType (:token-type auth-map)))))
 
+(t/ann credential-with-scopes [GoogleCredential (t/Seq t/Str) -> GoogleCredential])
 (defn ^GoogleCredential credential-with-scopes
   "Creates a copy of the given credential, with the specified scopes attached.
   `scopes` should be a list or vec of one or more Strings"
   [^GoogleCredential cred, scopes]
   (.createScoped cred (set scopes)))
 
+(t/ann default-credential (t/Fn [-> GoogleCredential] [(t/Seq t/Str) -> GoogleCredential]))
 (defn ^GoogleCredential default-credential
   "Gets the default credential as configured by the GOOGLE_APPLICATION_CREDENTIALS environment variable
   (see https://developers.google.com/identity/protocols/application-default-credentials)
@@ -103,39 +105,41 @@
   ([scopes]
    (credential-with-scopes (default-credential) (set scopes))))
 
-(t/ann ^:no-check build-credential [GoogleCtx -> HttpRequestInitializer])
+(t/ann ^:no-check build-credential [(t/U GoogleCtx GoogleCredential) -> HttpRequestInitializer])
 (defn build-credential
   "Given a google-ctx configuration map, builds a GoogleCredential Object from
    the token response and google secret created from those respective methods.
-   If the provided configuration map is the keyword `:default`, this will return the default
-   credential as configured by the GOOGLE_APPLICATION_CREDENTIALS environment variable
-   (see https://developers.google.com/identity/protocols/application-default-credentials)"
+   If an instance of GoogleCredential is provided, it will be returned unmodified"
   [google-ctx]
    (cond
      ;pass through instances of GoogleCredential
      (instance? GoogleCredential google-ctx)
      google-ctx
-     ;allow :default keyword to allow the default
-     (= :default google-ctx)
-     (default-credential)
      ;construct the credential from the provided context
      :otherwise
-     (let [token-response (get-token-response google-ctx)
-           google-secret (get-google-secret google-ctx)
-           credential-builder (doto (GoogleCredential$Builder.)
-                                (.setTransport http-transport)
-                                (.setJsonFactory json-factory)
-                                (.setClientSecrets google-secret))
-           credential (doto (.build credential-builder)
-                        assert
-                        (.setFromTokenResponse token-response))
-           {:keys [connect-timeout read-timeout]} google-ctx]
-       (if (or connect-timeout read-timeout)
-         (reify HttpRequestInitializer
-           (initialize [_ request]
-             (.initialize credential request)
-             (when connect-timeout
-               (.setConnectTimeout request connect-timeout))
-             (when read-timeout
-               (.setReadTimeout request read-timeout))))
-         credential))))
+     (build-credential-from-ctx google-ctx)))
+
+(t/ann ^:no-check build-credential-from-ctx [GoogleCtx -> HttpRequestInitializer])
+(defn- build-credential-from-ctx
+  "Constructs a GoogleCredential from the token response and Google secret as obtained
+  from those respsective methods."
+  [google-ctx]
+  (let [token-response (get-token-response google-ctx)
+        google-secret (get-google-secret google-ctx)
+        credential-builder (doto (GoogleCredential$Builder.)
+                             (.setTransport http-transport)
+                             (.setJsonFactory json-factory)
+                             (.setClientSecrets google-secret))
+        credential (doto (.build credential-builder)
+                     assert
+                     (.setFromTokenResponse token-response))
+        {:keys [connect-timeout read-timeout]} google-ctx]
+    (if (or connect-timeout read-timeout)
+      (reify HttpRequestInitializer
+        (initialize [_ request]
+          (.initialize credential request)
+          (when connect-timeout
+            (.setConnectTimeout request connect-timeout))
+          (when read-timeout
+            (.setReadTimeout request read-timeout))))
+      credential)))

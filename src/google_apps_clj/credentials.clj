@@ -19,7 +19,7 @@
 (t/defalias GoogleCtx
   (t/HMap :mandatory {:client-id t/Str
                       :client-secret t/Str
-                      :redirect-uris (t/Vec t/Str)
+                      :redirect-uris (t/Seq t/Str)
                       :auth-map (t/HMap :mandatory {:access-token t/Str
                                                     :expires-in t/AnyInteger
                                                     :refresh-token t/Str
@@ -37,6 +37,7 @@
 (t/ann json-factory JsonFactory)
 (def json-factory (JacksonFactory/getDefaultInstance))
 
+
 (t/ann get-google-secret [GoogleCtx -> GoogleClientSecrets])
 (defn get-google-secret
   "Given a google-ctx configuration map, creates a GoogleClientSecrets Object
@@ -45,7 +46,7 @@
   (let [details (doto (GoogleClientSecrets$Details.)
                   (.setClientId (:client-id google-ctx))
                   (.setClientSecret (:client-secret google-ctx))
-                  (.setRedirectUris (:redirect-uris google-ctx)))
+                  (.setRedirectUris (vec (:redirect-uris google-ctx))))
         google-secret (doto (GoogleClientSecrets.)
                         (.setInstalled details))]
     google-secret))

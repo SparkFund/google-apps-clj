@@ -107,20 +107,6 @@
   ([scopes]
    (credential-with-scopes (default-credential) (set scopes))))
 
-(t/ann ^:no-check build-credential [(t/U GoogleCtx GoogleCredential) -> HttpRequestInitializer])
-(defn build-credential
-  "Given a google-ctx configuration map, builds a GoogleCredential Object from
-   the token response and google secret created from those respective methods.
-   If an instance of GoogleCredential is provided, it will be returned unmodified"
-  [google-ctx]
-   (cond
-     ;pass through instances of GoogleCredential
-     (instance? GoogleCredential google-ctx)
-     google-ctx
-     ;construct the credential from the provided context
-     :otherwise
-     (build-credential-from-ctx google-ctx)))
-
 (t/ann ^:no-check build-credential-from-ctx [GoogleCtx -> HttpRequestInitializer])
 (defn- build-credential-from-ctx
   "Constructs a GoogleCredential from the token response and Google secret as obtained
@@ -145,6 +131,20 @@
           (when read-timeout
             (.setReadTimeout request read-timeout))))
       credential)))
+
+(t/ann ^:no-check build-credential [(t/U GoogleCtx GoogleCredential) -> HttpRequestInitializer])
+(defn build-credential
+  "Given a google-ctx configuration map, builds a GoogleCredential Object from
+   the token response and google secret created from those respective methods.
+   If an instance of GoogleCredential is provided, it will be returned unmodified"
+  [google-ctx]
+  (cond
+    ;pass through instances of GoogleCredential
+    (instance? GoogleCredential google-ctx)
+    google-ctx
+    ;construct the credential from the provided context
+    :otherwise
+    (build-credential-from-ctx google-ctx)))
 
 (t/ann credential-from-json-stream [t/Any -> GoogleCredential])
 (defn credential-from-json-stream

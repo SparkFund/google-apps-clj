@@ -1,6 +1,28 @@
 # google-apps-clj changes
 
 
+0.4.0 (2016-02-25)
+------------------
+
+**Breaking Changes**
+
+* Many functions which previously were annotated to take a `credentials/GoogleCtx` map,
+can now also accept a `GoogleCredential`. This changes the annotation to `credentials/GoogleAuth`.
+
+**Features**
+
+* Add support for [Service Account credentials](https://developers.google.com/identity/protocols/OAuth2ServiceAccount)
+* Add helper methods for loading credentials, including [application default credentials](https://developers.google.com/identity/protocols/application-default-credentials)
+* Add option to `google-drive/upload!` to prevent automatic conversion to Google Docs
+* Improvements to `core.typed` annotations (still not complete)
+
+**Documentation**
+
+* Better changelog format
+* Improved documentation to match new Google Developer Console
+* Added instructions on how to obtain and use Service Account Credentials
+
+
 0.3.3 (2016-01-14)
 ----------------------------------------
 

@@ -1,12 +1,14 @@
 # google-apps-clj
 
 A Clojure library that wraps the Google Java API for different Google
-Applications. This library is partially typed using core.typed.
+Applications. This library is partially typed using `core.typed`
 
-## Obtaining
+## Installing
 
-```
-[google-apps-clj "0.3.3"]
+If you're using Leiningen, just add this to your `project.clj`:
+
+```clj
+[google-apps-clj "0.4.0"]
 ```
 
 ## Currently supported APIs

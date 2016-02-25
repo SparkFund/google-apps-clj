@@ -15,7 +15,7 @@
                                        HttpRequestInitializer)
            (com.google.api.client.json JsonFactory)
            (com.google.api.client.json.jackson2 JacksonFactory)
-           (java.io ByteArrayInputStream File)
+           (java.io ByteArrayInputStream)
            (java.nio.charset Charset)))
 
 (t/defalias GoogleCtx
@@ -31,9 +31,16 @@
                      :read-timeout t/AnyInteger}))
 
 (t/defalias GoogleAuth (t/U GoogleCtx GoogleCredential))
+(t/defalias OAuthScopes (t/Coll t/Str))
 
 (t/non-nil-return com.google.api.client.json.jackson2.JacksonFactory/getDefaultInstance :all)
 (t/non-nil-return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport/newTrustedTransport :all)
+(t/non-nil-return com.google.api.client.googleapis.auth.oauth2.GoogleCredential/createScoped :all)
+(t/non-nil-return com.google.api.client.googleapis.auth.oauth2.GoogleCredential/getApplicationDefault :all)
+(t/non-nil-return com.google.api.client.googleapis.auth.oauth2.GoogleCredential/fromStream :all)
+(t/non-nil-return java.nio.charset.Charset/forName :all)
+
+(t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
 
 (t/ann http-transport HttpTransport)
 (def http-transport (GoogleNetHttpTransport/newTrustedTransport))
@@ -92,15 +99,15 @@
       (.setRefreshToken (:refresh-token auth-map))
       (.setTokenType (:token-type auth-map)))))
 
-(t/ann credential-with-scopes [GoogleCredential (t/Seq t/Str) -> GoogleCredential])
+(t/ann credential-with-scopes [GoogleCredential OAuthScopes -> GoogleCredential])
 (defn ^GoogleCredential credential-with-scopes
   "Creates a copy of the given credential, with the specified scopes attached.
   `scopes` should be a list or vec of one or more Strings"
   [^GoogleCredential cred, scopes]
   (.createScoped cred (set scopes)))
 
-(t/ann default-credential (t/Fn [-> GoogleCredential] [(t/Seq t/Str) -> GoogleCredential]))
-(defn ^GoogleCredential default-credential
+(t/ann default-credential (t/IFn [-> GoogleCredential] [OAuthScopes -> GoogleCredential]))
+(defn default-credential
   "Gets the default credential as configured by the GOOGLE_APPLICATION_CREDENTIALS environment variable
   (see https://developers.google.com/identity/protocols/application-default-credentials)
   Optionally you may specify a collection (list/vec/set) of string scopes to attach to the credential"
@@ -159,7 +166,7 @@
 (t/ann credential-from-json [t/Str -> GoogleCredential])
 (defn credential-from-json
   "Builds a GoogleCredential from a raw JSON string describing a Google API credential"
-  [cred-json]
+  [^String cred-json]
   (let [charset (Charset/forName "UTF-8")
         byte-array (.getBytes cred-json charset)
         input-stream (new ByteArrayInputStream byte-array)]

@@ -142,32 +142,34 @@
   ([scopes]
    (credential-with-scopes (default-credential) (set scopes))))
 
-(t/ann ^:no-check build-credential-from-ctx [GoogleCtx -> HttpRequestInitializer])
+(t/ann ^:no-check request-initializer [(t/U nil t/Int) (t/U nil t/Int) -> HttpRequestInitializer])
+(defn- ^HttpRequestInitializer request-initializer
+  "Constructs an instance of HttpRequestInitializer that will set the
+  specified timeouts (in ms).  Either or both timeout may be `nil`"
+  [connect-timeout read-timeout]
+  (reify HttpRequestInitializer
+    (initialize [_ request]
+      (when connect-timeout (.setConnectTimeout request connect-timeout))
+      (when read-timeout (.setReadTimeout request read-timeout)))))
+
+(t/ann build-credential-from-ctx [GoogleCtx -> GoogleCredential])
 (defn- build-credential-from-ctx
   "Constructs a GoogleCredential from the token response and Google secret as obtained
   from those respsective methods."
   [google-ctx]
   (let [token-response (get-token-response google-ctx)
         google-secret (get-google-secret google-ctx)
+        req-initializer (request-initializer (:connect-timeout google-ctx) (:read-timeout google-ctx))
         credential-builder (doto (GoogleCredential$Builder.)
                              (.setTransport http-transport)
                              (.setJsonFactory json-factory)
-                             (.setClientSecrets google-secret))
-        credential (doto (.build credential-builder)
-                     assert
-                     (.setFromTokenResponse token-response))
-        {:keys [connect-timeout read-timeout]} google-ctx]
-    (if (or connect-timeout read-timeout)
-      (reify HttpRequestInitializer
-        (initialize [_ request]
-          (.initialize credential request)
-          (when connect-timeout
-            (.setConnectTimeout request connect-timeout))
-          (when read-timeout
-            (.setReadTimeout request read-timeout))))
-      credential)))
+                             (.setRequestInitializer req-initializer)
+                             (.setClientSecrets google-secret))]
+    (doto (.build credential-builder)
+      assert
+      (.setFromTokenResponse token-response))))
 
-(t/ann ^:no-check build-credential [GoogleAuth -> HttpRequestInitializer])
+(t/ann build-credential [GoogleAuth -> GoogleCredential])
 (defn build-credential
   "Given a google-ctx configuration map, builds a GoogleCredential Object from
    the token response and google secret created from those respective methods.

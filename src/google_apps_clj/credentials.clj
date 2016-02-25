@@ -30,6 +30,8 @@
           :optional {:connect-timeout t/AnyInteger
                      :read-timeout t/AnyInteger}))
 
+(t/defalias GoogleAuth (t/U GoogleCtx GoogleCredential))
+
 (t/non-nil-return com.google.api.client.json.jackson2.JacksonFactory/getDefaultInstance :all)
 (t/non-nil-return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport/newTrustedTransport :all)
 
@@ -132,7 +134,7 @@
             (.setReadTimeout request read-timeout))))
       credential)))
 
-(t/ann ^:no-check build-credential [(t/U GoogleCtx GoogleCredential) -> HttpRequestInitializer])
+(t/ann ^:no-check build-credential [GoogleAuth -> HttpRequestInitializer])
 (defn build-credential
   "Given a google-ctx configuration map, builds a GoogleCredential Object from
    the token response and google secret created from those respective methods.

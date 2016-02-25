@@ -37,7 +37,8 @@
                                                 Property
                                                 PropertyList
                                                 User)
-           (java.io InputStream)))
+           (java.io InputStream)
+           (com.google.api.client.googleapis.auth.oauth2 GoogleCredential)))
 
 ;;; TODO this does not type check now due to protocol (ab)use and general
 ;;; unfamiliarity with types when I first rewrote it
@@ -58,7 +59,7 @@
 (t/non-nil-return com.google.api.services.drive.Drive$Permissions/list :all)
 (t/non-nil-return com.google.api.services.drive.Drive$Permissions/update :all)
 
-(t/ann build-drive-service [cred/GoogleCtx -> Drive])
+(t/ann build-drive-service [cred/GoogleAuth -> Drive])
 (defn ^Drive build-drive-service
   "Given a google-ctx configuration map, builds a Drive service using
    credentials coming from the OAuth2.0 credential setup inside google-ctx"
@@ -227,7 +228,7 @@
       (cond-doto (InputStreamContent. ^String mime-type (io/input-stream content))
         size (.setLength ^Long size)))))
 
-(t/ann build-request [cred/GoogleCtx Query -> Request])
+(t/ann build-request [cred/GoogleAuth Query -> Request])
 (defn- ^DriveRequest build-request
   "Converts a query into a stateful request object executable in the
    given google context. Queries are maps with the following required

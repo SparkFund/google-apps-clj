@@ -36,6 +36,38 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 10. Copy the returned data into your google-creds.edn file under the `:auth-map` key. Reload it into your REPL.
 11. You are now ready to use the other APIs with your credential file
 
+### Using Service Account Credentials
+
+Google also supports [Service Account credentials](https://developers.google.com/identity/protocols/OAuth2ServiceAccount)
+for server-to-server API access.  The credential is provided as a JSON file containing a private key and some other data.
+
+To obtain a service credential:
+
+1. Log in to Google using the account you wish the credentials to be under
+2. Navigate to the [Developer's Console](https://console.developers.google.com)
+3. Create a project and name it appropriately
+4. Navigate to the [API Manager](https://console.developers.google.com/apis/library), and enable the APIs you need an disable the default-provided ones you don't need
+5. Navigate to the [_Permissions > Service Accounts_ page](https://console.developers.google.com/permissions/serviceaccounts)
+6. Create a new service account, selecting the option to obtain a new private key as JSON.
+7. You should be given a JSON file containing the credential.  You have a few options now:
+  * Store it anywhere, and set an environment variable (`GOOGLE_APPLICATION_CREDENTIALS`) to point to it
+  * On Mac/Linux, rename and move the JSON file to be `~/.config/gcloud/application_default_credentials.json` (making directories as needed)
+  * On Windows, rename and move the JSON file to be `%APPDATA%\gcloud\application_default_credentials.json` (making directories as needed)
+
+Now you can use `google-apps-clj.credentials/default-credential` to load these credentials, and then
+pass them into most places that might otherwise expect a `google-ctx`.  For example:
+
+```clj
+(let [scopes [com.google.api.services.drive.DriveScopes/DRIVE]
+      creds (google-apps-clj.credentials/default-credential scopes)]
+    (google-apps-clj.google-drive/list-files! creds "FOLDERIDFOLDERIDFOLDERIDFOLD"))
+```
+
+(note in this scenario that the service account user has to be given the appropriate permissions in Drive.
+The service account user won't show up by name in searches, but it can be added as a viewer/editor using its
+`USERID@PROJECTID.iam.gserviceaccount.com` email address as found in the JSON credential file)
+
+
 ### Drive API
 
 ##### Supported Functionality
@@ -74,8 +106,6 @@ In order to use any of these APIs, you must first use the Google OAuth 2.0 libra
 
 #### General
 
-* Allow service account authentication in addition to the current
-  user-account OAuth funkiness
 * Consider ditching the baroque Google java library in favor of
   direct integration with the api using clj-http or the like
 

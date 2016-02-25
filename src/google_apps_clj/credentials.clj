@@ -1,9 +1,9 @@
 (ns google-apps-clj.credentials
   "A library used to set up Google OAuth 2 credentials"
   (:require [clojure.core.typed :as t]
+            [clojure.java.io :as io]
             [clojure.edn :as edn :only [read-string]])
-  (:import (com.google.api.client.auth.oauth2 Credential
-                                              TokenResponse)
+  (:import (com.google.api.client.auth.oauth2 TokenResponse)
            (com.google.api.client.googleapis.auth.oauth2 GoogleAuthorizationCodeFlow$Builder
                                                          GoogleClientSecrets
                                                          GoogleClientSecrets$Details
@@ -14,7 +14,9 @@
            (com.google.api.client.http HttpTransport
                                        HttpRequestInitializer)
            (com.google.api.client.json JsonFactory)
-           (com.google.api.client.json.jackson2 JacksonFactory)))
+           (com.google.api.client.json.jackson2 JacksonFactory)
+           (java.io ByteArrayInputStream)
+           (java.nio.charset Charset)))
 
 (t/defalias GoogleCtx
   (t/HMap :mandatory {:client-id t/Str
@@ -28,8 +30,17 @@
           :optional {:connect-timeout t/AnyInteger
                      :read-timeout t/AnyInteger}))
 
+(t/defalias GoogleAuth (t/U GoogleCtx GoogleCredential))
+(t/defalias OAuthScopes (t/Coll t/Str))
+
 (t/non-nil-return com.google.api.client.json.jackson2.JacksonFactory/getDefaultInstance :all)
 (t/non-nil-return com.google.api.client.googleapis.javanet.GoogleNetHttpTransport/newTrustedTransport :all)
+(t/non-nil-return com.google.api.client.googleapis.auth.oauth2.GoogleCredential/createScoped :all)
+(t/non-nil-return com.google.api.client.googleapis.auth.oauth2.GoogleCredential/getApplicationDefault :all)
+(t/non-nil-return com.google.api.client.googleapis.auth.oauth2.GoogleCredential/fromStream :all)
+(t/non-nil-return java.nio.charset.Charset/forName :all)
+
+(t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
 
 (t/ann http-transport HttpTransport)
 (def http-transport (GoogleNetHttpTransport/newTrustedTransport))
@@ -88,10 +99,27 @@
       (.setRefreshToken (:refresh-token auth-map))
       (.setTokenType (:token-type auth-map)))))
 
-(t/ann ^:no-check build-credential [GoogleCtx -> HttpRequestInitializer])
-(defn build-credential
-  "Given a google-ctx configuration map, builds a GoogleCredential Object from
-   the token response and google secret created from those respective methods."
+(t/ann credential-with-scopes [GoogleCredential OAuthScopes -> GoogleCredential])
+(defn ^GoogleCredential credential-with-scopes
+  "Creates a copy of the given credential, with the specified scopes attached.
+  `scopes` should be a list or vec of one or more Strings"
+  [^GoogleCredential cred, scopes]
+  (.createScoped cred (set scopes)))
+
+(t/ann default-credential (t/IFn [-> GoogleCredential] [OAuthScopes -> GoogleCredential]))
+(defn default-credential
+  "Gets the default credential as configured by the GOOGLE_APPLICATION_CREDENTIALS environment variable
+  (see https://developers.google.com/identity/protocols/application-default-credentials)
+  Optionally you may specify a collection (list/vec/set) of string scopes to attach to the credential"
+  ([]
+   (GoogleCredential/getApplicationDefault))
+  ([scopes]
+   (credential-with-scopes (default-credential) (set scopes))))
+
+(t/ann ^:no-check build-credential-from-ctx [GoogleCtx -> HttpRequestInitializer])
+(defn- build-credential-from-ctx
+  "Constructs a GoogleCredential from the token response and Google secret as obtained
+  from those respsective methods."
   [google-ctx]
   (let [token-response (get-token-response google-ctx)
         google-secret (get-google-secret google-ctx)
@@ -112,3 +140,34 @@
           (when read-timeout
             (.setReadTimeout request read-timeout))))
       credential)))
+
+(t/ann ^:no-check build-credential [GoogleAuth -> HttpRequestInitializer])
+(defn build-credential
+  "Given a google-ctx configuration map, builds a GoogleCredential Object from
+   the token response and google secret created from those respective methods.
+   If an instance of GoogleCredential is provided, it will be returned unmodified"
+  [google-ctx]
+  (cond
+    ;pass through instances of GoogleCredential
+    (instance? GoogleCredential google-ctx)
+    google-ctx
+    ;construct the credential from the provided context
+    :otherwise
+    (build-credential-from-ctx google-ctx)))
+
+(t/ann credential-from-json-stream [t/Any -> GoogleCredential])
+(defn credential-from-json-stream
+  "Consumes an input stream containing JSON describing a Google API credential
+  `stream` can be anything that can be handled by `clojure.java.io/input-stream`"
+  [stream]
+  (with-open [input-stream (io/input-stream stream)]
+    (GoogleCredential/fromStream input-stream)))
+
+(t/ann credential-from-json [t/Str -> GoogleCredential])
+(defn credential-from-json
+  "Builds a GoogleCredential from a raw JSON string describing a Google API credential"
+  [^String cred-json]
+  (let [charset (Charset/forName "UTF-8")
+        byte-array (.getBytes cred-json charset)
+        input-stream (new ByteArrayInputStream byte-array)]
+    (credential-from-json-stream input-stream)))

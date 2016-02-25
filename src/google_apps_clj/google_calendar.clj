@@ -11,9 +11,10 @@
            (com.google.api.services.calendar Calendar
                                              Calendar$Builder
                                              Calendar$Events$Insert
-                                             CalendarScopes)))
+                                             CalendarScopes)
+           (com.google.api.client.googleapis.auth.oauth2 GoogleCredential)))
 
-(t/ann build-calendar-service [cred/GoogleCtx -> Calendar])
+(t/ann build-calendar-service [cred/GoogleAuth -> Calendar])
 (defn build-calendar-service
   "Given a google-ctx configuration map, builds a Calendar service using
   credentials coming from the OAuth2.0 credential setup inside googlectx"
@@ -24,7 +25,7 @@
     (cast Calendar (doto (.build calendar-builder)
                      assert))))
 
-(t/ann add-calendar-event [cred/GoogleCtx String String String String String (t/Coll String) Boolean -> Event])
+(t/ann add-calendar-event [cred/GoogleAuth String String String String String (t/Coll String) Boolean -> Event])
 (defn- add-calendar-event
   "Given a google-ctx configuration map, a title, a description, a location, a start and
    end time (in either YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS(+ or - hours off GMT like 4:00)),
@@ -62,7 +63,7 @@
     (cast Event (doto (.execute insert-request)
                   assert))))
 
-(t/ann add-calendar-time-event [cred/GoogleCtx String String String String String (t/Coll String) -> Event])
+(t/ann add-calendar-time-event [cred/GoogleAuth String String String String String (t/Coll String) -> Event])
 (defn add-calendar-time-event
   "Given a google-ctx configuration map, a title, a description, a location,
    a start and end time (in YYYY-MM-DDTHH:MM:SS(+ or - hours off GMT like 4:00)),
@@ -71,7 +72,7 @@
   [google-ctx title description location start-time end-time attendees]
   (add-calendar-event google-ctx title description location start-time end-time attendees false))
 
-(t/ann add-calendar-day-event [cred/GoogleCtx String String String String String (t/Coll String) -> Event])
+(t/ann add-calendar-day-event [cred/GoogleAuth String String String String String (t/Coll String) -> Event])
 (defn add-calendar-day-event
   "Given a google-ctx configuration map, a title, a description, a location,
    a start and end time (in YYYY-MM-DD), and a list of attendees email addresses,
@@ -79,7 +80,7 @@
   [google-ctx title description location start-time end-time attendees]
   (add-calendar-event google-ctx title description location start-time end-time attendees true))
 
-(t/ann list-events [cred/GoogleCtx String String -> (t/Seq Event)])
+(t/ann list-events [cred/GoogleAuth String String -> (t/Seq Event)])
 (defn list-events
   "Given a google-ctx configuration map, a start time and an end time
    (in YYYY-MM-DDTHH:MM:SS(+ or - hours off GMT like 4:00)),
@@ -102,7 +103,7 @@
                                      assert)
                                    (t/Seq Event))))
 
-(t/ann list-day-events [cred/GoogleCtx String String -> (t/Seq Event)])
+(t/ann list-day-events [cred/GoogleAuth String String -> (t/Seq Event)])
 (defn list-day-events
   "Given a google-ctx configuration map, a day in the form(YYYY-MM-DD),
    and an offset from the GMT time zone(in the form + or - 04 or 11, etc),
@@ -112,7 +113,7 @@
         end-time (str day "T23:59:59" time-zone-offset ":00")]
     (list-events google-ctx start-time end-time)))
 
-(t/ann list-events-by-name [cred/GoogleCtx String Number -> (t/Seq Event)])
+(t/ann list-events-by-name [cred/GoogleAuth String Number -> (t/Seq Event)])
 (defn list-events-by-name
   "Given a google-ctx configuration map, a title that will be the query
    of the event(this could be an email, title, description), and the max 

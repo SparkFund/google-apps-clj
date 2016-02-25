@@ -101,11 +101,11 @@
   (t/HMap :mandatory {:model ':files
                       :action ':insert
                       :description t/Str
-                      :mime-type t/Str
                       :title t/Str}
           :optional {:fields Fields
                      :parent-ids (t/Seq FileId)
                      :writers-can-share? t/Bool
+                     :mime-type (t/Option t/Str)
                      :content FileUploadContent
                      :size Long} ; TODO non-negative integer
           :complete? true))
@@ -219,14 +219,16 @@
       title (.setTitle title)
       (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
 
-(t/ann build-stream [(t/U FileInsertQuery FileUpdateQuery) ->
-                     (t/Option InputStreamContent)])
-(defn- ^InputStreamContent build-stream
+(t/ann build-stream [(t/U FileInsertQuery FileUpdateQuery) -> (t/Option InputStreamContent)])
+(defn- build-stream
   [query]
-  (let [{:keys [content mime-type size]} query]
-    (when content
-      (cond-doto (InputStreamContent. ^String mime-type (io/input-stream content))
-        size (.setLength ^Long size)))))
+  (when-let [content (:content query)]
+    (let [mime-type (:mime-type query)
+          size (:size query)
+          input-stream (io/input-stream content)
+          content-stream (new InputStreamContent (or mime-type "") input-stream)]
+      (when (integer? size) (.setLength content-stream (long size)))
+      content-stream)))
 
 (t/ann build-request [cred/GoogleAuth Query -> Request])
 (defn- ^DriveRequest build-request

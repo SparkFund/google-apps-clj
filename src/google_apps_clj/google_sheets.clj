@@ -20,8 +20,8 @@
                                                 SpreadsheetService
                                                 WorksheetQuery)
            (com.google.gdata.data.batch BatchOperationType
-                                        BatchUtils)
-           (com.google.api.client.googleapis.auth.oauth2 GoogleCredential)))
+                                        BatchUtils)))
+
 (t/ann ^:no-check clojure.java.io/as-url [t/Str -> java.net.URL])
 
 (def spreadsheet-url
@@ -37,11 +37,13 @@
   ;; by apparently completely incompatible mechanisms. Here, we just
   ;; explicitly ignore any timeouts while I pause and reflect on my
   ;; increasingly bad life choices
-  (let [google-ctx (dissoc google-ctx :read-timeout :open-timeout)
-        google-credential (cred/build-credential google-ctx)
-        service (doto (SpreadsheetService. "Default Spreadsheet Service")
-                  (.setOAuth2Credentials google-credential))]
-    service))
+  (let [google-ctx (if (map? google-ctx)
+                     (dissoc google-ctx :read-timeout :open-timeout)
+                     google-ctx)
+        cred (cred/build-credential google-ctx)
+        service (SpreadsheetService. "Default Spreadsheet Service")]
+    (doto service
+      (.setOAuth2Credentials cred))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;;;;;;;;;;;;;;;;;;;;;;; Spreadsheet Entry Functions ;;;;;;;;;;;;;;;;;;;;;;;;;;

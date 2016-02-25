@@ -11,6 +11,9 @@ If you're using Leiningen, just add this to your `project.clj`:
 [google-apps-clj "0.4.0"]
 ```
 
+Check out [CHANGELOG.md](CHANGELOG.md) to see what's been updated lately.
+
+
 ## Currently supported APIs
 
 * Google OAuth 2.0
@@ -124,4 +127,4 @@ The service account user won't show up by name in searches, but it can be added 
 
 Copyright © SparkFund 2015-2016
 
-Distributed under the Apache License, Version 2.0. See [/LICENSE](LICENSE) for details.
+Distributed under the Apache License, Version 2.0. See [LICENSE.txt](LICENSE.txt) for details.

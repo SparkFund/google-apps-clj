@@ -1,6 +1,17 @@
 # google-apps-clj changes
 
 
+0.4.1 (2016-02-26)
+------------------
+
+**Bug Fixes**
+
+* Fixed two slight dependency mismatches between `com.google.gdata/core` and other
+Google dependencies, by adding exclusions to `com.google.gdata/core`:
+  - `com.google.code.findbugs/jsr305` is `1.3.7` in `gdata/core`, `1.3.9` elsewhere
+  - `org.apache.httpcomponents/httpclient` is `4.0.1` in `gdata/core`, `4.0.3` elsewhere
+
+
 0.4.0 (2016-02-25)
 ------------------
 

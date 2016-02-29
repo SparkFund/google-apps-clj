@@ -1,6 +1,21 @@
 # google-apps-clj changes
 
 
+0.4.2 (2016-02-29)
+------------------
+
+**Features**
+
+* Allow specifying default credential location using a System Property called `GOOGLE_APPLICATION_CREDENTIALS`
+(this previously could be done with an environment variable of the same name; the system property will take precedence,
+and if neither a system property nor an environment variable is specified, we'll still fall back to the Google
+client library's default behavior, which also searches a predetermined file location)
+
+**Documentation**
+
+* Added documentation in [doc/RELEASING.md](doc/RELEASING.md) covering steps needed to cut a new release of this library
+
+
 0.4.1 (2016-02-26)
 ------------------
 

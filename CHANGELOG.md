@@ -1,6 +1,17 @@
 # google-apps-clj changes
 
 
+0.4.3 (2016-02-29)
+------------------
+
+**Bug Fixes**
+
+* Fixed some (but not all) type checking failures in `google-sheets` and `google-drive` namespaces
+* Updated `build-credential-from-ctx` to return a `GoogleCredential` instance, which plays nicer with GSheets APIs.
+Since `GoogleCredential` implements `HttpRequestInitializer`, client code shouldn't require modification
+(although you may have to change type annotations if you referenced `HttpRequestInitializer`)
+
+
 0.4.2 (2016-02-29)
 ------------------
 

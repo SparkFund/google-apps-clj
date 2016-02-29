@@ -41,6 +41,7 @@
 (t/non-nil-return java.nio.charset.Charset/forName :all)
 
 (t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
+(t/ann ^:no-check clojure.core/some? [t/Any -> t/Bool])
 
 (t/ann http-transport HttpTransport)
 (def http-transport (GoogleNetHttpTransport/newTrustedTransport))
@@ -106,13 +107,38 @@
   [^GoogleCredential cred, scopes]
   (.createScoped cred (set scopes)))
 
+(t/ann credential-from-json-stream [t/Any -> GoogleCredential])
+(defn credential-from-json-stream
+  "Consumes an input stream containing JSON describing a Google API credential
+  `stream` can be anything that can be handled by `clojure.java.io/input-stream`"
+  [stream]
+  (with-open [input-stream (io/input-stream stream)]
+    (GoogleCredential/fromStream input-stream)))
+
+(t/ann credential-from-json [t/Str -> GoogleCredential])
+(defn credential-from-json
+  "Builds a GoogleCredential from a raw JSON string describing a Google API credential"
+  [^String cred-json]
+  (let [charset (Charset/forName "UTF-8")
+        byte-array (.getBytes cred-json charset)
+        input-stream (new ByteArrayInputStream byte-array)]
+    (credential-from-json-stream input-stream)))
+
+(t/ann GAPP_CRED_VAR t/Str)
+(def ^:private GAPP_CRED_VAR "GOOGLE_APPLICATION_CREDENTIALS")
+
 (t/ann default-credential (t/IFn [-> GoogleCredential] [OAuthScopes -> GoogleCredential]))
 (defn default-credential
   "Gets the default credential as configured by the GOOGLE_APPLICATION_CREDENTIALS environment variable
   (see https://developers.google.com/identity/protocols/application-default-credentials)
   Optionally you may specify a collection (list/vec/set) of string scopes to attach to the credential"
   ([]
-   (GoogleCredential/getApplicationDefault))
+   (let [prop-path (System/getProperty GAPP_CRED_VAR)
+         env-path (System/getenv GAPP_CRED_VAR)]
+     (cond
+       (some? prop-path) (credential-from-json-stream prop-path)
+       (some? env-path) (credential-from-json-stream env-path)
+       :otherwise (GoogleCredential/getApplicationDefault))))
   ([scopes]
    (credential-with-scopes (default-credential) (set scopes))))
 
@@ -154,20 +180,3 @@
     ;construct the credential from the provided context
     :otherwise
     (build-credential-from-ctx google-ctx)))
-
-(t/ann credential-from-json-stream [t/Any -> GoogleCredential])
-(defn credential-from-json-stream
-  "Consumes an input stream containing JSON describing a Google API credential
-  `stream` can be anything that can be handled by `clojure.java.io/input-stream`"
-  [stream]
-  (with-open [input-stream (io/input-stream stream)]
-    (GoogleCredential/fromStream input-stream)))
-
-(t/ann credential-from-json [t/Str -> GoogleCredential])
-(defn credential-from-json
-  "Builds a GoogleCredential from a raw JSON string describing a Google API credential"
-  [^String cred-json]
-  (let [charset (Charset/forName "UTF-8")
-        byte-array (.getBytes cred-json charset)
-        input-stream (new ByteArrayInputStream byte-array)]
-    (credential-from-json-stream input-stream)))

@@ -247,7 +247,7 @@
    :file-id - specifies the file for file-specific models and actions"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
-        {:keys [model action fields]} query
+        {:keys [model action fields direct-upload]} query
         ;; TODO more rigorous support for nesting, e.g. permissions(role,type)
         fields (when (seq fields) (string/join "," (map name fields)))
         items? (= :list action)
@@ -295,6 +295,12 @@
                         (doto (.insert (.files drive) file stream)
                           (.setConvert convert))
                         (.insert (.files drive) file))]
+          ;Allow direct upload, which is more efficient for tiny files
+          ;https://developers.google.com/api-client-library/java/google-api-java-client/media-upload#direct
+          (when direct-upload
+            (when-let [uploader (.getMediaHttpUploader request)]
+              (.setDirectUploadEnabled uploader true)))
+          ;Allow requesting specific fields only in response, which can be more efficient
           (cond-doto ^DriveRequest request
             fields (.setFields fields))))
       :permissions

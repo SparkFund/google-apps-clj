@@ -43,6 +43,9 @@
 ;;; TODO this does not type check now due to protocol (ab)use and general
 ;;; unfamiliarity with types when I first rewrote it
 
+
+;; General type annotations for external things
+
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
 (t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
 
@@ -59,6 +62,250 @@
 (t/non-nil-return com.google.api.services.drive.Drive$Permissions/list :all)
 (t/non-nil-return com.google.api.services.drive.Drive$Permissions/update :all)
 
+;; Basic helper methods
+;; TODO: consider moving to a `util` namespace if it's not google-drive specific?
+
+(t/ann bool? [t/Any -> t/Bool])
+(defn bool? [v]
+  (or (true? v) (false? v)))
+
+
+;; Basic shared data types
+
+(t/defalias FileId t/Str)
+(t/defalias FolderId t/Str)
+(t/defalias FieldList (t/Seq (t/U t/Keyword t/Str)))
+(t/defalias FileUploadContent t/Any)
+
+(t/defalias FileDeleteQuery
+  (t/HMap
+    :mandatory {:model   ':files
+                :action  ':delete
+                :file-id FileId}
+    :complete? true))
+
+(t/defalias FileListQuery
+  (t/HMap
+    :mandatory {:model  ':files
+                :action ':list}
+    :optional {:query  t/Str
+               :fields FieldList}
+    :complete? true))
+
+(t/defalias FileGetQuery
+  (t/HMap
+    :mandatory {:model   ':files
+                :action  ':get
+                :file-id FileId}
+    :optional {:fields FieldList}
+    :complete? true))
+
+(t/defalias FileInsertQuery
+  (t/HMap
+    :mandatory {:model  ':files
+                :action ':insert
+                :title  t/Str}
+    :optional {:fields             FieldList
+               :description        t/Str
+               :parent-ids         (t/Seq FolderId)
+               :writers-can-share? t/Bool
+               :direct-upload?     t/Bool
+               :convert?           t/Bool
+               :mime-type          (t/Option t/Str)
+               :content            FileUploadContent
+               ;TODO non-negative integer for content-length
+               :content-length     t/Int}
+    :complete? true))
+
+(t/defalias FileUpdateQuery
+  (t/HMap
+    :mandatory {:model   ':files
+                :action  ':update
+                :file-id FileId}
+    :optional {:fields             FieldList
+               :description        t/Str
+               :parent-ids         (t/Seq FolderId)
+               :writers-can-share? t/Bool
+               :direct-upload?     t/Bool
+               :convert?           t/Bool
+               :mime-type          (t/Option t/Str)
+               :content            FileUploadContent
+               ;TODO non-negative integer for content-length
+               :content-length     t/Int}
+    :complete? true))
+
+
+;; Helper methods
+
+(t/ann build-file [(t/U FileInsertQuery FileUpdateQuery) -> File])
+(defn- ^File build-file
+  [query]
+  (let [{:keys [description mime-type parent-ids title writers-can-share?]} query
+        parents (when (seq parent-ids)
+                  (map (t/fn [id :- FolderId]
+                         (doto (ParentReference.)
+                           (.setId id)))
+                       parent-ids))
+        file (new File)]
+    (when description (.setDescription file description))
+    (when mime-type (.setMimeType file mime-type))
+    (when parents (.setParents file parents))
+    (when title (.setTitle file title))
+    (when (bool? writers-can-share?) (.setWritersCanShare file (boolean writers-can-share?)))
+    ;result is a file returned to the user
+    file))
+
+
+(t/ann build-stream [(t/U FileInsertQuery FileUpdateQuery) -> (t/Option InputStreamContent)])
+(defn- build-stream
+  [query]
+  (when-let [content (:content query)]
+    (let [mime-type (:mime-type query)
+          content-length (:content-length query)
+          input-stream (io/input-stream content)
+          content-stream (new InputStreamContent (or mime-type "") input-stream)]
+      (when (integer? content-length) (.setLength content-stream (long content-length)))
+      content-stream)))
+
+
+;TODO: instead of specifying the HMap here do we just use the `Query` union type?
+;TODO: should this logic get pushed out into the individual `*->DriveRequest` methods?
+(t/ann format-fields-string [(t/HMap :mandatory {:model t/Kw :action t/Kw} :optional {:fields FieldList}) -> (t/Option t/Str)])
+(defn- format-fields-string
+  [qmap]
+  (let [{:keys [model action fields]} qmap
+        ; TODO more rigorous support for nesting, e.g. permissions(role,type)
+        fields (when (seq fields) (string/join "," (map name fields)))
+        items? (= :list action)
+        fields-seq (cond-> []
+                           (and items? (= model :files)) (conj "nextPageToken")
+                           (and items? fields) (conj (format "items(%s)" fields))
+                           (and items? (not fields)) (conj "items")
+                           (and (not items?) fields) (conj fields))
+        fields (when (seq fields-seq) (string/join "," fields-seq))]
+    fields))
+
+
+;; Deleting a single file
+
+(t/ann file-delete-query [FileId -> FileDeleteQuery])
+(defn file-delete-query
+  [file-id]
+  {:model   :files
+   :action  :delete
+   :file-id file-id})
+
+(t/ann FileDeleteQuery->DriveRequest [Drive FileDeleteQuery -> Drive$Files$Delete])
+(defn FileDeleteQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [files-service (.files drive-service)]
+    (.delete files-service (:file-id qmap))))
+
+
+;; Listing files
+
+(t/ann file-list-query [FolderId -> FileListQuery])
+(defn file-list-query
+  [folder-id]
+  {:model  :files
+   :action :list
+   :query  (format "'%s' in parents" folder-id)})
+
+(t/ann FileListQuery->DriveRequest [Drive FileListQuery -> Drive$Files$List])
+(defn FileListQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [files-service (.files drive-service)
+        request (.list files-service)]
+    (when-let [query (:query qmap)] (.setQ request query))
+    (when-let [fields (format-fields-string qmap)] (.setFields request fields))
+    request))
+
+
+;; Grabbing a single file
+
+(t/ann file-get-query [FileId -> FileGetQuery])
+(defn file-get-query
+  [file-id]
+  {:model   :files
+   :action  :get
+   :file-id file-id})
+
+(t/ann FileGetQuery->DriveRequest [Drive FileGetQuery -> Drive$Files$Get])
+(defn FileGetQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [files-service (.files drive-service)
+        request (.get files-service (:file-id qmap))]
+    (when-let [fields (format-fields-string qmap)] (.setFields request fields))
+    request))
+
+
+;; Inserting (uploading) a single file
+
+(t/ann file-insert-query [FolderId FileUploadContent t/Str (t/HMap) -> FileInsertQuery])
+(defn file-insert-query
+  [folder-id content file-title {:keys [mime-type convert?] :as extra-args}]
+  (merge extra-args
+         {:model      :files
+          :action     :insert
+          :parent-ids [folder-id]
+          :title      file-title
+          :convert?   (if (bool? convert?) convert? (some? mime-type))
+          :content    content}))
+
+(t/ann FileInsertQuery->DriveRequest [Drive FileInsertQuery -> Drive$Files$Insert])
+(defn FileInsertQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [file (build-file qmap)
+        stream (build-stream qmap)
+        convert? (boolean (get-in qmap [:convert?] true))
+        files-service (.files drive-service)
+        request (if stream
+                  (doto (.insert files-service file stream)
+                    (.setConvert convert?))
+                  (.insert files-service file))]
+    ;Allow direct upload, which is more efficient for tiny files
+    ;https://developers.google.com/api-client-library/java/google-api-java-client/media-upload#direct
+    (when (:direct-upload? qmap)
+      (when-let [uploader (.getMediaHttpUploader request)]
+        (.setDirectUploadEnabled uploader true)))
+    (when-let [fields (format-fields-string qmap)] (.setFields request fields))
+    request))
+
+
+;; Updating a single file (either moving it, or changing contents, or potentially both)
+
+(t/ann file-update-query [FileId (t/HMap) -> FileUpdateQuery])
+(defn file-update-query
+  [file-id extra-args]
+  (merge extra-args
+         {:model    :files
+          :action   :update
+          :file-id  file-id
+          :convert? (boolean (:convert? extra-args))}))
+
+(t/ann FileUpdateQuery->DriveRequest [Drive FileUpdateQuery -> Drive$Files$Update])
+(defn FileUpdateQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [file (build-file qmap)
+        file-id (:file-id qmap)
+        stream (build-stream qmap)
+        convert? (boolean (get-in qmap [:convert?] false))
+        files-service (.files drive-service)
+        request (if stream
+                  (doto (.update files-service file-id file stream)
+                    (.setConvert convert?))
+                  (.update files-service file-id file))]
+    ;Allow direct upload, which is more efficient for tiny files
+    ;https://developers.google.com/api-client-library/java/google-api-java-client/media-upload#direct
+    (when (:direct-upload? qmap)
+      (when-let [uploader (.getMediaHttpUploader request)]
+        (.setDirectUploadEnabled uploader true)))
+    (when-let [fields (format-fields-string qmap)] (.setFields request fields))
+    request))
+
+
+
+
 (t/ann build-drive-service [cred/GoogleAuth -> Drive])
 (defn ^Drive build-drive-service
   "Given a google-ctx configuration map, builds a Drive service using
@@ -67,16 +314,16 @@
   (let [drive-builder (->> google-ctx
                            cred/build-credential
                            (Drive$Builder. cred/http-transport cred/json-factory))]
+    ;Sets the application name to be used in the UserAgent header of each request, or nil for none
     (.setApplicationName drive-builder "google-apps-clj")
     (cast Drive (doto (.build drive-builder)
                   assert))))
 
-(t/defalias FileId t/Str)
 
 ;; TODO union type of anything clojure.java.io/input-stream allows
-(t/defalias FileUploadContent t/Any)
 
-(t/defalias Fields (t/Seq (t/U t/Keyword t/Str)))
+
+
 
 (t/defalias PermissionIdentifier t/Str)
 
@@ -84,51 +331,15 @@
 
 (t/defalias PermissionType (t/U ':user ':group ':domain ':anyone))
 
-(t/defalias FileDeleteQuery
-  (t/HMap :mandatory {:model ':files
-                      :action ':delete
-                      :file-id FileId}
-          :complete? true))
 
-(t/defalias FileGetQuery
-  (t/HMap :mandatory {:model ':files
-                      :action ':get
-                      :file-id FileId}
-          :optional {:fields Fields}
-          :complete? true))
 
-(t/defalias FileInsertQuery
-  (t/HMap :mandatory {:model ':files
-                      :action ':insert
-                      :title t/Str}
-          :optional {:fields Fields
-                     :description t/Str
-                     :parent-ids (t/Seq FileId)
-                     :writers-can-share? t/Bool
-                     :direct-upload? t/Bool
-                     :convert? t/Bool
-                     :mime-type (t/Option t/Str)
-                     :content FileUploadContent
-                     :size Long} ; TODO non-negative integer
-          :complete? true))
 
-(t/defalias FileListQuery
-  (t/HMap :mandatory {:model ':files
-                      :action ':list}
-          :optional {:query t/Str
-                     :fields Fields}
-          :complete? true))
 
-(t/defalias FileUpdateQuery
-  (t/HMap :mandatory {:model ':files
-                      :action ':update
-                      :file-id FileId}
-          :optional {:fields Fields
-                     :parent-ids (t/Seq FileId)
-                     :writers-can-share? t/Bool
-                     :content FileContent
-                     :size t/Int}
-          :complete? true))
+
+
+
+
+
 
 (t/defalias PermissionDeleteQuery
   (t/HMap :mandatory {:model ':permissions
@@ -145,14 +356,14 @@
                       :type PermissionType
                       :value t/Str}
           :optional {:with-link? t/Bool
-                     :fields Fields}
+                     :fields     FieldList}
           :complete? true))
 
 (t/defalias PermissionListQuery
   (t/HMap :mandatory {:model ':permissions
                       :action ':list
                       :file-id FileId}
-          :optional {:fields Fields}
+          :optional {:fields FieldList}
           :complete? true))
 
 (t/defalias PermissionUpdateQuery
@@ -161,8 +372,8 @@
                       :file-id FileId
                       :permission-id PermissionIdentifier
                       :role Role}
-          :optional {:fields Fields
-                     :with-link? t/Bool
+          :optional {:fields              FieldList
+                     :with-link?          t/Bool
                      :transfer-ownership? t/Bool}
           :complete? true))
 
@@ -205,32 +416,6 @@
   "The id of the root folder"
   "root")
 
-(t/ann build-file [(t/U FileInsertQuery FileUpdateQuery) -> File])
-(defn- ^File build-file
-  [query]
-  (let [{:keys [description mime-type parent-ids title writers-can-share?]} query
-        parents (when (seq parent-ids)
-                  (map (t/fn [id :- FileId]
-                         (doto (ParentReference.)
-                           (.setId id)))
-                       parent-ids))]
-    (cond-doto (File.)
-      description (.setDescription description)
-      mime-type (.setMimeType mime-type)
-      parents (.setParents parents)
-      title (.setTitle title)
-      (not (nil? writers-can-share?)) (.setWritersCanShare writers-can-share?))))
-
-(t/ann build-stream [(t/U FileInsertQuery FileUpdateQuery) -> (t/Option InputStreamContent)])
-(defn- build-stream
-  [query]
-  (when-let [content (:content query)]
-    (let [mime-type (:mime-type query)
-          size (:size query)
-          input-stream (io/input-stream content)
-          content-stream (new InputStreamContent (or mime-type "") input-stream)]
-      (when (integer? size) (.setLength content-stream (long size)))
-      content-stream)))
 
 (t/ann build-request [cred/GoogleAuth Query -> Request])
 (defn- ^DriveRequest build-request
@@ -249,63 +434,16 @@
    :file-id - specifies the file for file-specific models and actions"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
-        {:keys [model action fields]} query
-        ;; TODO more rigorous support for nesting, e.g. permissions(role,type)
-        fields (when (seq fields) (string/join "," (map name fields)))
-        items? (= :list action)
-        fields-seq (cond-> []
-                     (and items? (= model :files))
-                     (conj "nextPageToken")
-                     (and items? fields)
-                     (conj (format "items(%s)" fields))
-                     (and items? (not fields))
-                     (conj "items")
-                     (and (not items?) fields)
-                     (conj fields))
-        fields (when (seq fields-seq) (string/join "," fields-seq))]
+        {:keys [model action]} query
+        fields (format-fields-string query)]
     (case model
       :files
       (case action
-        :delete
-        (let [{:keys [file-id]} query]
-          (.delete (.files drive) file-id))
-        :list
-        (let [{:keys [query]} query
-              request (cond-doto (.list (.files drive))
-                        query (.setQ query))]
-          (cond-doto ^DriveRequest request
-            fields (.setFields fields)))
-        :get
-        (let [{:keys [file-id]} query
-              request (.get (.files drive) file-id)]
-          (cond-doto ^DriveRequest request
-            fields (.setFields fields)))
-        :update
-        (let [{:keys [file-id]} query
-              file (build-file query)
-              stream (build-stream query)
-              request (if stream
-                        (.update (.files drive) file-id file stream)
-                        (.update (.files drive) file-id file))]
-          (cond-doto ^DriveRequest request
-            fields (.setFields fields)))
-        :insert
-        (let [file (build-file query)
-              stream (build-stream query)
-              convert? (boolean (get-in query [:convert?] true))
-              request (if stream
-                        (doto (.insert (.files drive) file stream)
-                          (.setConvert convert?))
-                        (.insert (.files drive) file))]
-          ;Allow direct upload, which is more efficient for tiny files
-          ;https://developers.google.com/api-client-library/java/google-api-java-client/media-upload#direct
-          (when (:direct-upload? query)
-            (when-let [uploader (.getMediaHttpUploader request)]
-              (.setDirectUploadEnabled uploader true)))
-          ;Allow requesting specific fields only in response, which can be more efficient
-          (when fields (.setFields request fields))
-          ;Return the request to the user
-          request))
+        :delete (FileDeleteQuery->DriveRequest drive query)
+        :list   (FileListQuery->DriveRequest drive query)
+        :get    (FileGetQuery->DriveRequest drive query)
+        :update (FileUpdateQuery->DriveRequest drive query)
+        :insert (FileInsertQuery->DriveRequest drive query))
       :permissions
       (case action
         :list
@@ -715,39 +853,20 @@
         (throw e))
       false)))
 
-(t/ann bool? [t/Any -> t/Bool])
-(defn bool? [v]
-  (or (true? v) (false? v)))
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
-(t/defalias
-  UploadFileQueryExtras
-  (t/HMap :optional
-          {:description    t/Str,
-           :mime-type      t/Str,
-           :convert?       t/Bool,
-           :direct-upload? t/Bool}))
-
-(t/ann upload-file-query [t/Str t/Any t/Str UploadFileQueryExtras -> FileInsertQuery])
-(defn upload-file-query
-  [folder-id content file-title {:keys [mime-type convert?] :as extra-args}]
-  (merge extra-args
-         {:model      :files
-          :action     :insert
-          :parent-ids [folder-id]
-          :title      file-title
-          :convert?   (if (bool? convert?) convert? (some? mime-type))
-          :content    content}))
 
 (t/ann upload-file! (t/IFn [cred/GoogleAuth t/Str t/Any t/Str -> t/Any]
-                           [cred/GoogleAuth t/Str t/Any t/Str UploadFileQueryExtras -> t/Any]))
+                           [cred/GoogleAuth t/Str t/Any t/Str (t/HMap) -> t/Any]))
 (defn upload-file!
   "Uploads a file with the given title and content into the specified folder.
   Additional upload options can be specified in a map"
   ([google-auth folder-id content file-title]
    (upload-file! google-auth folder-id content file-title {}))
   ([google-auth folder-id content file-title extra-args]
-   (let [query-map (upload-file-query folder-id content file-title extra-args)]
+   (let [query-map (file-insert-query folder-id content file-title extra-args)]
      (execute-query! google-auth query-map))))
+
 
 (defn download-file!
   "Downloads the contents of the given file as an inputstream, or nil if the
@@ -773,42 +892,28 @@
            (let [drive (build-drive-service google-ctx)]
              (.executeMediaAsInputStream (.get (.files drive) ^String (:id file))))))))))
 
-(t/ann delete-file [FileId -> FileDeleteQuery])
-(defn delete-file
-  [file-id]
-  {:model :files
-   :action :delete
-   :file-id file-id})
 
+;TODO: move me up next to query construction?
 (defn delete-file!
   "Permanently deletes the given file. If the file is a folder, this also
    deletes all of its descendents."
   [google-ctx file-id]
-  (execute-query! google-ctx (delete-file file-id)))
+  (execute-query! google-ctx (file-delete-query file-id)))
 
-(t/ann list-files [FileId -> FileListQuery])
-(defn list-files
-  [folder-id]
-  {:model :files
-   :action :list
-   :query (format "'%s' in parents" folder-id)})
-
+;TODO: move me up next to query construction?
 (defn list-files!
   "Returns a seq of files in the given folder"
   [google-ctx folder-id]
-  (execute-query! google-ctx (list-files folder-id)))
+  (execute-query! google-ctx (file-list-query folder-id)))
 
-(t/ann get-file [FileId -> FileGetQuery])
-(defn get-file
-  [file-id]
-  {:model :files
-   :action :get
-   :file-id file-id})
-
+;TODO: move me up next to query construction?
 (defn get-file!
   "Returns the metadata for the given file"
   [google-ctx file-id]
-  (execute-query! google-ctx (get-file file-id)))
+  (execute-query! google-ctx (file-get-query file-id)))
+
+
+
 
 ;; TODO core.typed should complain that not all Query types have :fields?
 (t/ann with-fields [Query -> Query])

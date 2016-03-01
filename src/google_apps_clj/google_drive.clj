@@ -100,11 +100,13 @@
 (t/defalias FileInsertQuery
   (t/HMap :mandatory {:model ':files
                       :action ':insert
-                      :description t/Str
                       :title t/Str}
           :optional {:fields Fields
+                     :description t/Str
                      :parent-ids (t/Seq FileId)
                      :writers-can-share? t/Bool
+                     :direct-upload? t/Bool
+                     :convert? t/Bool
                      :mime-type (t/Option t/Str)
                      :content FileUploadContent
                      :size Long} ; TODO non-negative integer
@@ -247,7 +249,7 @@
    :file-id - specifies the file for file-specific models and actions"
   [google-ctx query]
   (let [drive (build-drive-service google-ctx)
-        {:keys [model action fields direct-upload]} query
+        {:keys [model action fields]} query
         ;; TODO more rigorous support for nesting, e.g. permissions(role,type)
         fields (when (seq fields) (string/join "," (map name fields)))
         items? (= :list action)
@@ -290,19 +292,20 @@
         :insert
         (let [file (build-file query)
               stream (build-stream query)
-              convert (boolean (get-in query [:convert] true))
+              convert? (boolean (get-in query [:convert?] true))
               request (if stream
                         (doto (.insert (.files drive) file stream)
-                          (.setConvert convert))
+                          (.setConvert convert?))
                         (.insert (.files drive) file))]
           ;Allow direct upload, which is more efficient for tiny files
           ;https://developers.google.com/api-client-library/java/google-api-java-client/media-upload#direct
-          (when direct-upload
+          (when (:direct-upload? query)
             (when-let [uploader (.getMediaHttpUploader request)]
               (.setDirectUploadEnabled uploader true)))
           ;Allow requesting specific fields only in response, which can be more efficient
-          (cond-doto ^DriveRequest request
-            fields (.setFields fields))))
+          (when fields (.setFields request fields))
+          ;Return the request to the user
+          request))
       :permissions
       (case action
         :list
@@ -712,31 +715,39 @@
         (throw e))
       false)))
 
-(t/ann upload-file [FileId t/Str t/Str t/Str t/Any -> FileInsertQuery])
-(defn upload-file
-  ([folder-id title description mime-type content]
-   (upload-file folder-id title description mime-type content nil))
-  ([folder-id title description mime-type content convert-to-gdocs]
-   {:model       :files
-    :action      :insert
-    :parent-ids  [folder-id]
-    :title       title
-    :description description
-    :mime-type   mime-type
-    :convert     (cond
-                   (= true convert-to-gdocs) true
-                   (= false convert-to-gdocs) false
-                   :else (some? mime-type))
-    :content     content}))
+(t/ann bool? [t/Any -> t/Bool])
+(defn bool? [v]
+  (or (true? v) (false? v)))
 
+(t/defalias
+  UploadFileQueryExtras
+  (t/HMap :optional
+          {:description    t/Str,
+           :mime-type      t/Str,
+           :convert?       t/Bool,
+           :direct-upload? t/Bool}))
+
+(t/ann upload-file-query [t/Str t/Any t/Str UploadFileQueryExtras -> FileInsertQuery])
+(defn upload-file-query
+  [folder-id content file-title {:keys [mime-type convert?] :as extra-args}]
+  (merge extra-args
+         {:model      :files
+          :action     :insert
+          :parent-ids [folder-id]
+          :title      file-title
+          :convert?   (if (bool? convert?) convert? (some? mime-type))
+          :content    content}))
+
+(t/ann upload-file! (t/IFn [cred/GoogleAuth t/Str t/Any t/Str -> t/Any]
+                           [cred/GoogleAuth t/Str t/Any t/Str UploadFileQueryExtras -> t/Any]))
 (defn upload-file!
-  "Uploads a file with the given title, description, type, and content into
-   the given folder"
-  ([google-ctx folder-id title description mime-type content]
-   (upload-file! google-ctx folder-id title description mime-type content true))
-  ([google-ctx folder-id title description mime-type content convert-to-gdocs]
-   (execute-query! google-ctx
-                   (upload-file folder-id title description mime-type content convert-to-gdocs))))
+  "Uploads a file with the given title and content into the specified folder.
+  Additional upload options can be specified in a map"
+  ([google-auth folder-id content file-title]
+   (upload-file! google-auth folder-id content file-title {}))
+  ([google-auth folder-id content file-title extra-args]
+   (let [query-map (upload-file-query folder-id content file-title extra-args)]
+     (execute-query! google-auth query-map))))
 
 (defn download-file!
   "Downloads the contents of the given file as an inputstream, or nil if the

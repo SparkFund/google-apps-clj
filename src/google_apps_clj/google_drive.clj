@@ -572,19 +572,10 @@
 
 (t/ann Query->DriveRequest [Drive Query -> DriveRequest])
 (defn- ^DriveRequest Query->DriveRequest
-  "Converts a query into a stateful request object executable in the
-   given google context. Queries are maps with the following required
-   fields:
-
-   :model - :files, :permissions
-   :action - :list, :get, :update, :insert, :delete
-
-   Other fields may be given, and may be required by the action and model.
-   These may include:
-
-   :fields - a seq of keywords specifying the object projection
-   :query - used to constrain a list of files
-   :file-id - specifies the file for file-specific models and actions"
+  "Converts a Query map into an instance of DriveRequest.  All Query maps have at least
+  a `:model` and an `:action` key describing the type of operation that they represent.
+  The exact class returned depends on the `:model` and `:action` keys of the Query map,
+  but all returend classes are ones that implement DriveRequest."
   [drive-service query]
   (let [{:keys [model action]} query]
     (case model
@@ -601,7 +592,6 @@
         :insert (PermissionInsertQuery->DriveRequest drive-service query)
         :update (PermissionUpdateQuery->DriveRequest drive-service query)
         :delete (PermissionDeleteQuery->DriveRequest drive-service query)))))
-
 
 
 (defprotocol Requestable

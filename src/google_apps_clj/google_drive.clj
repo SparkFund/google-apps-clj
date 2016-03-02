@@ -1,45 +1,43 @@
 (ns google-apps-clj.google-drive
   "A library for connecting to Google Drive through the Drive API"
-  (:require [clojure.core.typed :as t]
-            [clojure.java.io :as io]
-            [clojure.string :as string]
-            [google-apps-clj.credentials :as cred]
-            [google-apps-clj.google-drive.mime-types :as gdrive-mime]
-            [google-apps-clj.google-drive.constants :as gdrive-const])
-  (:import (com.google.api.client.googleapis.batch BatchRequest
-                                                   BatchCallback)
-           (com.google.api.client.googleapis.json GoogleJsonError
-                                                  GoogleJsonError$ErrorInfo
-                                                  GoogleJsonErrorContainer
-                                                  GoogleJsonResponseException)
-           (com.google.api.client.http FileContent
-                                       InputStreamContent
-                                       GenericUrl)
-           (com.google.api.client.util GenericData)
-           (com.google.api.services.drive Drive
-                                          Drive$Builder
-                                          Drive$Files$Delete
-                                          Drive$Files$Get
-                                          Drive$Files$Insert
-                                          Drive$Files$List
-                                          Drive$Files$Update
-                                          Drive$Permissions$Delete
-                                          Drive$Permissions$Insert
-                                          Drive$Permissions$List
-                                          Drive$Permissions$Update
-                                          DriveRequest
-                                          DriveScopes Drive$Permissions)
-           (com.google.api.services.drive.model File
-                                                File$Labels
-                                                FileList
-                                                ParentReference
-                                                Permission
-                                                PermissionList
-                                                Property
-                                                PropertyList
-                                                User)
-           (java.io InputStream)
-           (com.google.api.client.googleapis.auth.oauth2 GoogleCredential)))
+  (:require
+    [clojure.core.typed :as t]
+    [clojure.java.io :as io]
+    [clojure.string :as string]
+    [google-apps-clj.credentials :as cred]
+    [google-apps-clj.google-drive.mime-types :as gdrive-mime]
+    [google-apps-clj.google-drive.constants :as gdrive-const])
+  (:import
+    (com.google.api.client.googleapis.batch
+      BatchRequest
+      BatchCallback)
+    (com.google.api.client.googleapis.json
+      GoogleJsonError
+      GoogleJsonError$ErrorInfo
+      GoogleJsonErrorContainer
+      GoogleJsonResponseException)
+    (com.google.api.client.http
+      InputStreamContent
+      GenericUrl)
+    (com.google.api.services.drive
+      Drive
+      Drive$Builder
+      Drive$Files$Delete
+      Drive$Files$Get
+      Drive$Files$Insert
+      Drive$Files$List
+      Drive$Files$Update
+      Drive$Permissions$Delete
+      Drive$Permissions$Insert
+      Drive$Permissions$List
+      Drive$Permissions$Update
+      DriveRequest)
+    (com.google.api.services.drive.model
+      File
+      FileList
+      ParentReference
+      Permission
+      PermissionList)))
 
 ;;; TODO this does not type check now due to protocol (ab)use and general
 ;;; unfamiliarity with types when I first rewrote it

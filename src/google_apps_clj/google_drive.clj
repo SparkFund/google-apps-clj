@@ -73,7 +73,7 @@
 
 (t/defalias FileId t/Str)
 (t/defalias FolderId t/Str)
-(t/defalias FieldList (t/Seq (t/U t/Keyword t/Str)))
+(t/defalias FieldList (t/Seqable (t/U t/Keyword t/Str)))
 (t/defalias FileUploadContent t/Any)
 (t/defalias PermissionId t/Str)
 (t/defalias Role (t/U ':owner ':writer ':reader))
@@ -110,7 +110,7 @@
                 :title  t/Str}
     :optional {:fields             FieldList
                :description        t/Str
-               :parent-ids         (t/Seq FolderId)
+               :parent-ids         (t/Seqable FolderId)
                :writers-can-share? t/Bool
                :direct-upload?     t/Bool
                :convert?           t/Bool
@@ -127,7 +127,7 @@
                 :file-id FileId}
     :optional {:fields             FieldList
                :description        t/Str
-               :parent-ids         (t/Seq FolderId)
+               :parent-ids         (t/Seqable FolderId)
                :writers-can-share? t/Bool
                :direct-upload?     t/Bool
                :convert?           t/Bool
@@ -234,7 +234,7 @@
 
 ;TODO: should this logic get pushed out into the individual `*->DriveRequest` methods?
 (t/ann format-fields-string [Query -> (t/Option t/Str)])
-(defn- format-fields-string
+(defn- ^String format-fields-string
   [qmap]
   (let [{:keys [model action fields]} qmap
         ; TODO more rigorous support for nesting, e.g. permissions(role,type)
@@ -314,20 +314,20 @@
 
 ;; Listing files
 
-(t/ann file-list-query (t/IFn [-> FileListQuery] [(t/HMap) -> FileListQuery]))
+(t/ann ^:no-check file-list-query (t/IFn [-> FileListQuery] [(t/HMap) -> FileListQuery]))
 (defn file-list-query
   ([] (file-list-query {}))
   ([extras]
    (merge extras {:model :files, :action :list})))
 
-(t/ann folder-list-files-query (t/IFn [FolderId -> FileListQuery] [FolderId (t/HMap) -> FileListQuery]))
+(t/ann ^:no-check folder-list-files-query (t/IFn [FolderId -> FileListQuery] [FolderId (t/HMap) -> FileListQuery]))
 (defn folder-list-files-query
   ([folder-id] (folder-list-files-query folder-id {}))
   ([folder-id extras]
    (file-list-query (merge extras {:query (format "'%s' in parents" folder-id)}))))
 
 
-(t/ann all-files-query (t/IFn [-> FileListQuery] [(t/HMap) -> FileListQuery]))
+(t/ann ^:no-check all-files-query (t/IFn [-> FileListQuery] [(t/HMap) -> FileListQuery]))
 (defn all-files-query
   ([] (all-files-query {}))
   ([extras]
@@ -367,7 +367,7 @@
 
 ;; Inserting (uploading) a single file or folder
 
-(t/ann file-insert-query [FolderId FileUploadContent t/Str (t/HMap) -> FileInsertQuery])
+(t/ann ^:no-check file-insert-query [FolderId FileUploadContent t/Str (t/HMap) -> FileInsertQuery])
 (defn file-insert-query
   [folder-id content file-title {:keys [mime-type convert?] :as extra-args}]
   (merge extra-args
@@ -419,7 +419,7 @@
 
 ;; Updating a single file (either moving it, or changing contents, or potentially both)
 
-(t/ann file-update-query [FileId (t/HMap) -> FileUpdateQuery])
+(t/ann ^:no-check file-update-query [FileId (t/HMap) -> FileUpdateQuery])
 (defn file-update-query
   [file-id extra-args]
   (merge extra-args
@@ -456,8 +456,8 @@
 
 ;; Enumerating permissions on a file/folder
 
-(t/ann permission-list-query (t/IFn [FileId -> PermissionListQuery]
-                                    [FileId (t/HMap) -> PermissionListQuery]))
+(t/ann ^:no-check permission-list-query (t/IFn [FileId -> PermissionListQuery]
+                                               [FileId (t/HMap) -> PermissionListQuery]))
 (defn permission-list-query
   ([file-id] (permission-list-query file-id {}))
   ([file-id extra-params]
@@ -476,7 +476,8 @@
 
 ;; Adding a permission to a file/folder
 
-(t/ann permission-insert-query [FileId t/Str Role -> PermissionInsertQuery])
+(t/ann ^:no-check permission-insert-query (t/IFn [FileId t/Str Role -> PermissionInsertQuery]
+                                                 [FileId t/Str Role (t/HMap) -> PermissionInsertQuery]))
 (defn permission-insert-query
   ([file-id principal role]
    (permission-insert-query file-id principal role {}))
@@ -498,8 +499,8 @@
     ;build up the Java permission object
     (.setValue permission value)
     (when role (.setRole permission (name role)))
-    (when type (.setType permission (type role)))
-    (when (some? with-link?) (.setWithLink permission with-link?))
+    (when type (.setType permission (name role)))
+    (when (some? with-link?) (.setWithLink permission (boolean with-link?)))
     ;now make the request
     (let [permission-svc (.permissions drive-service)
           request (.insert permission-svc file-id permission)]
@@ -510,8 +511,9 @@
 
 ;; Alter a permission on a file/folder
 
-(t/ann permission-update-query [FileId PermissionId Role -> PermissionUpdateQuery])
-(defn permission-update-query
+(t/ann permission-update-query (t/IFn [FileId PermissionId Role -> PermissionUpdateQuery]
+                                      [FileId PermissionId Role (t/HMap) -> PermissionUpdateQuery]))
+(defn ^:no-check permission-update-query
   ([file-id permission-id role]
    (permission-update-query file-id permission-id role {}))
   ([file-id permission-id role extra-params]
@@ -532,7 +534,7 @@
     ;now make the request
     (let [permission-svc (.permissions drive-service)
           request (.update permission-svc file-id permission-id permission)]
-      (when (some? transfer-ownership?) (.setTransferOwnership transfer-ownership?))
+      (when (some? transfer-ownership?) (.setTransferOwnership request (boolean transfer-ownership?)))
       (when-let [fields (format-fields-string qmap)] (.setFields request fields))
       request)))
 
@@ -570,14 +572,15 @@
                   assert))))
 
 
-(t/ann Query->DriveRequest [Drive Query -> DriveRequest])
+(t/ann ^:no-check Query->DriveRequest [Drive Query -> DriveRequest])
 (defn- ^DriveRequest Query->DriveRequest
   "Converts a Query map into an instance of DriveRequest.  All Query maps have at least
   a `:model` and an `:action` key describing the type of operation that they represent.
   The exact class returned depends on the `:model` and `:action` keys of the Query map,
   but all returend classes are ones that implement DriveRequest."
   [drive-service query]
-  (let [{:keys [model action]} query]
+  (t/let [model :- t/Kw (:model query)
+          action :- t/Kw (:action query)]
     (case model
       :files
       (case action

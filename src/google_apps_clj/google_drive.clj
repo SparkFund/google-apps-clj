@@ -28,13 +28,12 @@
                                           Drive$Permissions$List
                                           Drive$Permissions$Update
                                           DriveRequest
-                                          DriveScopes)
+                                          DriveScopes Drive$Permissions)
            (com.google.api.services.drive.model File
                                                 File$Labels
                                                 FileList
                                                 ParentReference
                                                 Permission
-                                                PermissionId
                                                 PermissionList
                                                 Property
                                                 PropertyList
@@ -78,7 +77,7 @@
 (t/defalias FolderId t/Str)
 (t/defalias FieldList (t/Seq (t/U t/Keyword t/Str)))
 (t/defalias FileUploadContent t/Any)
-(t/defalias PermissionIdentifier t/Str)
+(t/defalias PermissionId t/Str)
 (t/defalias Role (t/U ':owner ':writer ':reader))
 (t/defalias PermissionType (t/U ':user ':group ':domain ':anyone))
 
@@ -140,12 +139,20 @@
                :content-length     t/Int}
     :complete? true))
 
+(t/defalias PermissionListQuery
+  (t/HMap
+    :mandatory {:model   ':permissions
+                :action  ':list
+                :file-id FileId}
+    :optional {:fields FieldList}
+    :complete? true))
+
 (t/defalias PermissionDeleteQuery
   (t/HMap
     :mandatory {:model         ':permissions
                 :action        ':delete
                 :file-id       FileId
-                :permission-id PermissionIdentifier}
+                :permission-id PermissionId}
     :complete? true))
 
 (t/defalias PermissionInsertQuery
@@ -155,17 +162,9 @@
                 :file-id FileId
                 :role    Role
                 :type    PermissionType
-                :value   t/Str}
-    :optional {:with-link? t/Bool
+                :value   t/Str} ((
+                                                  :optional)) {:with-link? t/Bool
                :fields     FieldList}
-    :complete? true))
-
-(t/defalias PermissionListQuery
-  (t/HMap
-    :mandatory {:model   ':permissions
-                :action  ':list
-                :file-id FileId}
-    :optional {:fields FieldList}
     :complete? true))
 
 (t/defalias PermissionUpdateQuery
@@ -173,10 +172,9 @@
     :mandatory {:model         ':permissions
                 :action        ':update
                 :file-id       FileId
-                :permission-id PermissionIdentifier
+                :permission-id PermissionId
                 :role          Role}
     :optional {:fields              FieldList
-               :with-link?          t/Bool
                :transfer-ownership? t/Bool}
     :complete? true))
 
@@ -251,6 +249,38 @@
                            (and (not items?) fields) (conj fields))
         fields (when (seq fields-seq) (string/join "," fields-seq))]
     fields))
+
+(t/ann guess-principal-type [t/Str -> PermissionType])
+(defn- guess-principal-type
+  [^String principal]
+  (cond
+    (nil? principal) nil
+    (= "anyone" principal) :anyone
+    ;This seems to work correctly for users and groups
+    (pos? (.indexOf principal "@")) :user
+    :else :domain))
+
+(defn- derive-principal
+  [permission]
+  (let [{:keys [type email-address domain]} permission]
+    (case type
+      "anyone" "anyone"
+      "domain" domain
+      "group" email-address
+      "user" email-address)))
+
+
+(t/ann permission-has-principal? [t/Str t/Any -> t/Bool])
+(defn permission-has-principal?
+  [^String principal, permission]
+  (let [perm-type (:type permission)]
+    (case (guess-principal-type principal)
+      :user (and (= principal (:email-address permission))
+                 (or (= "user" perm-type) (= "group" perm-type)))
+      :domain (and (= principal (:domain permission))
+                   (= "domain" perm-type))
+      :anyone (and (= "anyone" perm-type))
+      false)))
 
 
 ;TODO: remove me
@@ -426,11 +456,105 @@
   [folder-id file-id]
   (file-update-query file-id {:parent-ids [folder-id]}))
 
-;; Enumerating permissions on a single entity
+;; Enumerating permissions on a file/folder
+
+(t/ann permission-list-query (t/IFn [FileId -> PermissionListQuery]
+                                    [FileId (t/HMap) -> PermissionListQuery]))
+(defn permission-list-query
+  ([file-id] (permission-list-query file-id {}))
+  ([file-id extra-params]
+   (let [default-fields [:id :role :withLink :type :domain :emailAddress]]
+     (merge {:fields default-fields :file-id file-id}
+            (or extra-params {})
+            {:model :permissions :action :list}))))
+
+(t/ann PermissionListQuery->DriveRequest [Drive PermissionListQuery -> Drive$Permissions$List])
+(defn PermissionListQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [file-id (:file-id qmap)
+        request (.list (.permissions drive-service) file-id)]
+    (when-let [fields (format-fields-string qmap)] (.setFields request fields))
+    request))
+
+;; Adding a permission to a file/folder
+
+(t/ann permission-insert-query [FileId t/Str Role -> PermissionInsertQuery])
+(defn permission-insert-query
+  ([file-id principal role]
+   (permission-insert-query file-id principal role {}))
+  ([file-id principal role extra-params]
+   (merge extra-params
+          {:model   :permissions
+           :action  :insert
+           :file-id file-id
+           :value   principal
+           :role    role
+           :type    (guess-principal-type principal)})))
 
 
+(t/ann PermissionInsertQuery->DriveRequest [Drive PermissionInsertQuery -> Drive$Permissions$Insert])
+(defn PermissionInsertQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [{:keys [file-id value role type with-link?]} qmap
+        permission (new Permission)]
+    ;build up the Java permission object
+    (.setValue permission value)
+    (when role (.setRole permission (name role)))
+    (when type (.setType permission (type role)))
+    (when (some? with-link?) (.setWithLink permission with-link?))
+    ;now make the request
+    (let [permission-svc (.permissions drive-service)
+          request (.insert permission-svc file-id permission)]
+      ;TODO: make sendNotificationEmails configurable via qmap?
+      (.setSendNotificationEmails request false)
+      (when-let [fields (format-fields-string qmap)] (.setFields request fields))
+      request)))
+
+;; Alter a permission on a file/folder
+
+(t/ann permission-update-query [FileId PermissionId Role -> PermissionUpdateQuery])
+(defn permission-update-query
+  ([file-id permission-id role]
+   (permission-update-query file-id permission-id role {}))
+  ([file-id permission-id role extra-params]
+   (merge extra-params
+          {:model         :permissions
+           :action        :update
+           :file-id       file-id
+           :permission-id permission-id
+           :role          role})))
+
+(t/ann PermissionUpdateQuery->DriveRequest [Drive PermissionUpdateQuery -> Drive$Permissions$Update])
+(defn PermissionUpdateQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (let [{:keys [file-id permission-id role transfer-ownership?]} qmap
+        permission (new Permission)]
+    ;build up the Java permission object
+    (.setRole permission (name role))
+    ;now make the request
+    (let [permission-svc (.permissions drive-service)
+          request (.update permission-svc file-id permission-id permission)]
+      (when (some? transfer-ownership?) (.setTransferOwnership transfer-ownership?))
+      (when-let [fields (format-fields-string qmap)] (.setFields request fields))
+      request)))
 
 
+;; Removing a single permission from a single file/folder
+
+(t/ann permission-delete-query [FileId PermissionId -> PermissionDeleteQuery])
+(defn permission-delete-query
+  [file-id permission-id]
+  {:model :permissions
+   :action :delete
+   :file-id file-id
+   :permission-id permission-id})
+
+(t/ann PermissionDeleteQuery->DriveRequest [Drive PermissionDeleteQuery -> Drive$Permissions$Delete])
+(defn PermissionDeleteQuery->DriveRequest
+  [^Drive drive-service, qmap]
+  (.delete (.permissions drive-service)
+           (:file-id qmap)
+           (:permission-id qmap)))
 
 
 
@@ -446,9 +570,6 @@
     (.setApplicationName drive-builder "google-apps-clj")
     (cast Drive (doto (.build drive-builder)
                   assert))))
-
-
-
 
 
 (t/ann Query->DriveRequest [Drive Query -> DriveRequest])
@@ -467,8 +588,7 @@
    :query - used to constrain a list of files
    :file-id - specifies the file for file-specific models and actions"
   [drive-service query]
-  (let [{:keys [model action]} query
-        fields (format-fields-string query)]
+  (let [{:keys [model action]} query]
     (case model
       :files
       (case action
@@ -479,36 +599,12 @@
         :insert (FileInsertQuery->DriveRequest drive-service query))
       :permissions
       (case action
-        :list
-        (let [{:keys [file-id]} query
-              request (.list (.permissions drive-service) file-id)]
-          (cond-doto ^DriveRequest request
-            fields (.setFields fields)))
-        :insert
-        (let [{:keys [file-id value role type with-link?]} query
-              permission (doto (Permission.)
-                             (.setRole (name role))
-                             (.setType (name type))
-                             (.setValue value)
-                             (cond-doto (not (nil? with-link?))
-                               (.setWithLink with-link?)))
-              request (doto (.insert (.permissions drive-service) file-id permission)
-                        (.setSendNotificationEmails false))]
-          (cond-doto ^DriveRequest request
-            fields (.setFields fields)))
-        :update
-        (let [{:keys [file-id permission-id role transfer-ownership?]} query
-              permission (doto (Permission.)
-                           (.setRole (name role)))
-              request (cond-doto (.update (.permissions drive-service)
-                                          file-id permission-id permission)
-                        (not (nil? transfer-ownership?))
-                        (.setTransferOwnership transfer-ownership?))]
-          (cond-doto ^DriveRequest request
-            fields (.setFields fields)))
-        :delete
-        (let [{:keys [file-id permission-id]} query]
-          (.delete (.permissions drive-service) file-id permission-id))))))
+        :list   (PermissionListQuery->DriveRequest drive-service query)
+        :insert (PermissionInsertQuery->DriveRequest drive-service query)
+        :update (PermissionUpdateQuery->DriveRequest drive-service query)
+        :delete (PermissionDeleteQuery->DriveRequest drive-service query)))))
+
+
 
 (defprotocol Requestable
   (response-data
@@ -731,47 +827,19 @@
 
 ;;;; Commands and their helpers
 
-(t/ann derive-type [t/Str -> PermissionType])
-(defn- derive-type
-  [^String principal]
-  (cond (= "anyone" principal)
-        :anyone
-        (pos? (.indexOf principal "@"))
-        :user ; This seems to work correctly for users and groups
-        :else
-        :domain))
-
-(defn- derive-principal
-  [permission]
-  (let [{:keys [type email-address domain]} permission]
-    (case type
-      "anyone" "anyone"
-      "domain" domain
-      "group" email-address
-      "user" email-address)))
-
+;TODO: rename
+;TODO: annotate
 (defn get-permissions!
   "Returns the permissions granted on the given file, filtered for those
    explicitly granted to the principal if given"
   ([google-ctx file-id]
    (get-permissions! google-ctx file-id false))
   ([google-ctx file-id principal]
-   (let [list-query {:model :permissions
-                     :action :list
-                     :file-id file-id
-                     :fields [:id :role :withLink :type :domain :emailAddress]}
-         permissions (execute-query! google-ctx list-query)]
-     (cond->> permissions
-       principal (filter (fn [permission]
-                           (condp = (derive-type principal)
-                             :user
-                             (and (= principal (:email-address permission))
-                                  (#{"user" "group"} (:type permission)))
-                             :domain
-                             (and (= principal (:domain permission))
-                                  (= "domain" (:type permission)))
-                             :anyone
-                             (and (= "anyone" (:type permission))))))))))
+   (let [query permission-list-query
+         permissions (execute-query! google-ctx query)]
+     (if (some? principal)
+       (filter (partial permission-has-principal? principal) permissions)
+       permissions))))
 
 (defn summarize-permissions
   "Returns a map of the sets of principals in the given permissions grouped by
@@ -809,20 +877,8 @@
                  false (nil? (:with-link? permission))))
         (reset! principal-id (:id permission))
         (swap! ids-to-delete conj (:id permission))))
-    (let [deletes (map (fn [id] {:model :permissions
-                                 :action :delete
-                                 :file-id file-id
-                                 :permission-id id})
-                       @ids-to-delete)
-          insert (when-not @principal-id
-                   {:model :permissions
-                    :action :insert
-                    :file-id file-id
-                    :value principal
-                    :role role
-                    :type (derive-type principal)
-                    :with-link? searchable?
-                    :fields [:id]})]
+    (let [deletes (map (partial permission-delete-query file-id) @ids-to-delete)
+          insert (when-not @principal-id (permission-insert-query file-id principal role {:with-link? searchable? :fields [:id]}))]
       (execute! google-ctx deletes)
       (when insert
         (execute-query! google-ctx insert)))
@@ -837,12 +893,7 @@
    other operation."
   [google-ctx file-id principal]
   (let [extant (get-permissions! google-ctx file-id principal)
-        deletes (mapv (fn [permission]
-                        {:model :permissions
-                         :action :delete
-                         :file-id file-id
-                         :permission-id (:id permission)})
-                      extant)]
+        deletes (mapv #(permission-delete-query file-id (:id %)) extant)]
     (execute! google-ctx deletes)
     nil))
 
@@ -887,22 +938,22 @@
    (download-file! google-ctx file nil))
   ([google-ctx file mime-type]
    (when (:id file)
-     (let [drive (build-drive-service google-ctx)]
+     (let [drive-svc (build-drive-service google-ctx)
+           files-svc (.files drive-svc)]
        (if mime-type
          (when-let [url (get (:export-links file) mime-type)]
            ;; This is purely to force authentication on the stupid drive request
            ;; factory. There is almost certainly a better way to handle this,
            ;; either locally or by reconsidering the google-ctx object
-           (.execute (.setFields (.get (.files drive) (:id file)) "id"))
-           (let [http-request (.getRequestFactory drive)
+           (.execute (.setFields (.get files-svc (:id file)) "id"))
+           (let [http-request (.getRequestFactory drive-svc)
                  gurl (GenericUrl. ^String url)
                  _ (prn "gurl" gurl)
                  get-request (.buildGetRequest http-request gurl)
                  response (.execute get-request)]
              (.getContent response)))
          (when-let [url (:download-url file)]
-           (let [drive (build-drive-service google-ctx)]
-             (.executeMediaAsInputStream (.get (.files drive) ^String (:id file))))))))))
+           (.executeMediaAsInputStream (.get files-svc ^String (:id file)))))))))
 
 
 ;TODO: move me up next to query construction?

@@ -76,6 +76,10 @@
 (t/defalias FolderId t/Str)
 (t/defalias FieldList (t/Seq (t/U t/Keyword t/Str)))
 (t/defalias FileUploadContent t/Any)
+(t/defalias PermissionIdentifier t/Str)
+(t/defalias Role (t/U ':owner ':writer ':reader))
+(t/defalias PermissionType (t/U ':user ':group ':domain ':anyone))
+
 
 (t/defalias FileDeleteQuery
   (t/HMap
@@ -134,6 +138,68 @@
                :content-length     t/Int}
     :complete? true))
 
+(t/defalias PermissionDeleteQuery
+  (t/HMap
+    :mandatory {:model         ':permissions
+                :action        ':delete
+                :file-id       FileId
+                :permission-id PermissionIdentifier}
+    :complete? true))
+
+(t/defalias PermissionInsertQuery
+  (t/HMap
+    :mandatory {:model   ':permissions
+                :action  ':insert
+                :file-id FileId
+                :role    Role
+                :type    PermissionType
+                :value   t/Str}
+    :optional {:with-link? t/Bool
+               :fields     FieldList}
+    :complete? true))
+
+(t/defalias PermissionListQuery
+  (t/HMap
+    :mandatory {:model   ':permissions
+                :action  ':list
+                :file-id FileId}
+    :optional {:fields FieldList}
+    :complete? true))
+
+(t/defalias PermissionUpdateQuery
+  (t/HMap
+    :mandatory {:model         ':permissions
+                :action        ':update
+                :file-id       FileId
+                :permission-id PermissionIdentifier
+                :role          Role}
+    :optional {:fields              FieldList
+               :with-link?          t/Bool
+               :transfer-ownership? t/Bool}
+    :complete? true))
+
+(t/defalias Query
+  (t/U FileDeleteQuery
+       FileGetQuery
+       FileInsertQuery
+       FileListQuery
+       FileUpdateQuery
+       PermissionDeleteQuery
+       PermissionInsertQuery
+       PermissionListQuery
+       PermissionUpdateQuery))
+
+(t/defalias Request
+  (t/U Drive$Files$Delete
+       Drive$Files$Get
+       Drive$Files$Insert
+       Drive$Files$List
+       Drive$Files$Update
+       Drive$Permissions$Delete
+       Drive$Permissions$Insert
+       Drive$Permissions$List
+       Drive$Permissions$Update))
+
 
 ;; Helper methods
 
@@ -168,9 +234,8 @@
       content-stream)))
 
 
-;TODO: instead of specifying the HMap here do we just use the `Query` union type?
 ;TODO: should this logic get pushed out into the individual `*->DriveRequest` methods?
-(t/ann format-fields-string [(t/HMap :mandatory {:model t/Kw :action t/Kw} :optional {:fields FieldList}) -> (t/Option t/Str)])
+(t/ann format-fields-string [Query -> (t/Option t/Str)])
 (defn- format-fields-string
   [qmap]
   (let [{:keys [model action fields]} qmap
@@ -184,6 +249,21 @@
                            (and (not items?) fields) (conj fields))
         fields (when (seq fields-seq) (string/join "," fields-seq))]
     fields))
+
+
+;TODO: remove me
+(defmacro cond-doto
+  [x & forms]
+  (assert (even? (count forms)))
+  (let [gx (gensym)]
+    `(let [~gx ~x]
+       ~@(map (fn [[test expr]]
+                (if (seq? expr)
+                  `(when ~test (~(first expr) ~gx ~@(next expr)))
+                  `(when ~test (~expr ~gx))))
+              (partition 2 forms))
+       ~gx)))
+
 
 
 ;; Deleting a single file
@@ -204,12 +284,28 @@
 
 ;; Listing files
 
-(t/ann file-list-query [FolderId -> FileListQuery])
+(t/ann file-list-query (t/IFn [-> FileListQuery] [(t/HMap) -> FileListQuery]))
 (defn file-list-query
-  [folder-id]
-  {:model  :files
-   :action :list
-   :query  (format "'%s' in parents" folder-id)})
+  ([] (file-list-query []))
+  ([extras]
+   (merge extras {:model :files, :action :list})))
+
+(t/ann folder-list-files-query (t/IFn [FolderId -> FileListQuery] [FolderId (t/HMap) -> FileListQuery]))
+(defn folder-list-files-query
+  ([folder-id] (folder-list-files-query folder-id {}))
+  ([folder-id extras]
+   (file-list-query (merge extras {:query (format "'%s' in parents" folder-id)}))))
+
+
+(t/ann all-files-query (t/IFn [-> FileListQuery] [(t/HMap) -> FileListQuery]))
+(defn all-files-query
+  ([] (all-files-query {}))
+  ([extras]
+   (let [fields [:id :title :writersCanShare :mimeType
+                 "permissions(emailAddress,type,domain,role,withLink)"
+                 "owners(emailAddress)"
+                 "parents(id)"]]
+     (file-list-query (merge {:fields fields :query "trashed=false"} extras)))))
 
 (t/ann FileListQuery->DriveRequest [Drive FileListQuery -> Drive$Files$List])
 (defn FileListQuery->DriveRequest
@@ -239,7 +335,7 @@
     request))
 
 
-;; Inserting (uploading) a single file
+;; Inserting (uploading) a single file or folder
 
 (t/ann file-insert-query [FolderId FileUploadContent t/Str (t/HMap) -> FileInsertQuery])
 (defn file-insert-query
@@ -270,6 +366,29 @@
         (.setDirectUploadEnabled uploader true)))
     (when-let [fields (format-fields-string qmap)] (.setFields request fields))
     request))
+
+
+;; Helpers for dealing with folders
+
+;Inserted folders have a special mime-type
+;see https://developers.google.com/drive/v3/web/folder
+(t/ann folder-mime-type t/Str)
+(def folder-mime-type "application/vnd.google-apps.folder")
+
+(t/ann folder? [(t/HMap :mandatory {:mime-type t/Str}) -> t/Bool])
+(defn folder?
+  "Predicate fn indicating if the given file map has the folder mime type"
+  [file-map]
+  (= folder-mime-type (:mime-type file-map)))
+
+(t/ann folder-insert-query [FolderId t/Str -> FileInsertQuery])
+(defn folder-insert-query
+  [parent-id title]
+  {:model      :files
+   :action     :insert
+   :parent-ids [parent-id]
+   :mime-type  folder-mime-type
+   :title      title})
 
 
 ;; Updating a single file (either moving it, or changing contents, or potentially both)
@@ -304,6 +423,17 @@
     request))
 
 
+(t/ann file-move-query [FolderId FileId -> FileUpdateQuery])
+(defn file-move-query
+  [folder-id file-id]
+  (file-update-query file-id {:parent-ids [folder-id]}))
+
+;; Enumerating permissions on a single entity
+
+
+
+
+
 
 
 (t/ann build-drive-service [cred/GoogleAuth -> Drive])
@@ -320,96 +450,7 @@
                   assert))))
 
 
-;; TODO union type of anything clojure.java.io/input-stream allows
 
-
-
-
-(t/defalias PermissionIdentifier t/Str)
-
-(t/defalias Role (t/U ':owner ':writer ':reader))
-
-(t/defalias PermissionType (t/U ':user ':group ':domain ':anyone))
-
-
-
-
-
-
-
-
-
-
-
-(t/defalias PermissionDeleteQuery
-  (t/HMap :mandatory {:model ':permissions
-                      :action ':delete
-                      :file-id FileId
-                      :permission-id PermissionIdentifier}
-          :complete? true))
-
-(t/defalias PermissionInsertQuery
-  (t/HMap :mandatory {:model ':permissions
-                      :action ':insert
-                      :file-id FileId
-                      :role Role
-                      :type PermissionType
-                      :value t/Str}
-          :optional {:with-link? t/Bool
-                     :fields     FieldList}
-          :complete? true))
-
-(t/defalias PermissionListQuery
-  (t/HMap :mandatory {:model ':permissions
-                      :action ':list
-                      :file-id FileId}
-          :optional {:fields FieldList}
-          :complete? true))
-
-(t/defalias PermissionUpdateQuery
-  (t/HMap :mandatory {:model ':permissions
-                      :action ':update
-                      :file-id FileId
-                      :permission-id PermissionIdentifier
-                      :role Role}
-          :optional {:fields              FieldList
-                     :with-link?          t/Bool
-                     :transfer-ownership? t/Bool}
-          :complete? true))
-
-(t/defalias Query
-  (t/U FileDeleteQuery
-       FileGetQuery
-       FileInsertQuery
-       FileListQuery
-       FileUpdateQuery
-       PermissionDeleteQuery
-       PermissionInsertQuery
-       PermissionListQuery
-       PermissionUpdateQuery))
-
-(t/defalias Request
-  (t/U Drive$Files$Delete
-       Drive$Files$Get
-       Drive$Files$Insert
-       Drive$Files$List
-       Drive$Files$Update
-       Drive$Permissions$Delete
-       Drive$Permissions$Insert
-       Drive$Permissions$List
-       Drive$Permissions$Update))
-
-(defmacro cond-doto
-  [x & forms]
-  (assert (even? (count forms)))
-  (let [gx (gensym)]
-    `(let [~gx ~x]
-       ~@(map (fn [[test expr]]
-                (if (seq? expr)
-                  `(when ~test (~(first expr) ~gx ~@(next expr)))
-                  `(when ~test (~expr ~gx))))
-              (partition 2 forms))
-       ~gx)))
 
 (t/ann root-id t/Str)
 (def root-id
@@ -816,44 +857,26 @@
     (execute! google-ctx deletes)
     nil))
 
-(def folder-mime-type
-  "application/vnd.google-apps.folder")
 
-(t/ann create-folder [FileId t/Str -> FileInsertQuery])
-(defn create-folder
-  [parent-id title]
-  {:model :files
-   :action :insert
-   :parent-ids [parent-id]
-   :mime-type folder-mime-type
-   :title title})
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn create-folder!
   "Create a folder with the given title in the given parent folder"
   [google-ctx parent-id title]
-  (execute-query! google-ctx (create-folder parent-id title)))
+  (execute-query! google-ctx (folder-insert-query parent-id title)))
 
-(t/ann move-file [FileId FileId -> FileUpdateQuery])
-(defn move-file
-  [folder-id file-id]
-  {:model :files
-   :action :update
-   :parent-ids [folder-id]
-   :file-id file-id})
 
 (defn move-file!
   "Moves a file to a folder. This returns true if successful, false
    if forbidden, and raises otherwise."
   [google-ctx folder-id file-id]
   (try
-    (execute-query! google-ctx (move-file folder-id file-id))
+    (execute-query! google-ctx (file-move-query folder-id file-id))
     true
     (catch GoogleJsonResponseException e
       (when (not= 400 (.getStatusCode e))
         (throw e))
       false)))
-
-;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 
 (t/ann upload-file! (t/IFn [cred/GoogleAuth t/Str t/Any t/Str -> t/Any]
@@ -867,7 +890,7 @@
    (let [query-map (file-insert-query folder-id content file-title extra-args)]
      (execute-query! google-auth query-map))))
 
-
+;TODO: annotate
 (defn download-file!
   "Downloads the contents of the given file as an inputstream, or nil if the
    file is not available or is not available in the given mime type."
@@ -894,6 +917,7 @@
 
 
 ;TODO: move me up next to query construction?
+;TODO: annotate
 (defn delete-file!
   "Permanently deletes the given file. If the file is a folder, this also
    deletes all of its descendents."
@@ -901,44 +925,22 @@
   (execute-query! google-ctx (file-delete-query file-id)))
 
 ;TODO: move me up next to query construction?
+;TODO: annotate
 (defn list-files!
   "Returns a seq of files in the given folder"
-  [google-ctx folder-id]
-  (execute-query! google-ctx (file-list-query folder-id)))
+  ([google-ctx folder-id]
+   (list-files! google-ctx folder-id {}))
+  ([google-ctx folder-id extras]
+   (execute-query! google-ctx (folder-list-files-query folder-id extras))))
 
 ;TODO: move me up next to query construction?
+;TODO: annotate
 (defn get-file!
   "Returns the metadata for the given file"
   [google-ctx file-id]
   (execute-query! google-ctx (file-get-query file-id)))
 
-
-
-
-;; TODO core.typed should complain that not all Query types have :fields?
-(t/ann with-fields [Query -> Query])
-(defn with-fields
-  "Sets or adds to the set of fields returned by the given request"
-  [query fields]
-  (update-in query [:fields] (fnil into #{}) fields))
-
-(t/ann all-files Query)
-(def all-files
-  (let [fields [:id :title :writersCanShare :mimeType
-                "permissions(emailAddress,type,domain,role,withLink)"
-                "owners(emailAddress)"
-                "parents(id)"]]
-    {:model :files
-     :action :list
-     :fields fields
-     :query "trashed=false"}))
-
-(t/ann folder? [(t/HMap :mandatory {:mime-type t/Str}) -> t/Bool])
-(defn folder?
-  "Predicate fn indicating if the given file map has the folder mime type"
-  [file]
-  (= folder-mime-type (:mime-type file)))
-
+;TODO: clean up and maybe pull into separate parts?
 (defn find-file!
   "Given a path as a seq of titles relative to the given folder id,
    returns the file if there is one. If any title matches more than one

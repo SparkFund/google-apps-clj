@@ -162,8 +162,8 @@
                 :file-id FileId
                 :role    Role
                 :type    PermissionType
-                :value   t/Str} ((
-                                                  :optional)) {:with-link? t/Bool
+                :value   t/Str}
+    :optional {:with-link? t/Bool
                :fields     FieldList}
     :complete? true))
 
@@ -257,7 +257,7 @@
     (nil? principal) nil
     (= "anyone" principal) :anyone
     ;This seems to work correctly for users and groups
-    (pos? (.indexOf principal "@")) :user
+    (> (.indexOf principal "@") 0) :user
     :else :domain))
 
 (defn- derive-principal
@@ -318,7 +318,7 @@
 
 (t/ann file-list-query (t/IFn [-> FileListQuery] [(t/HMap) -> FileListQuery]))
 (defn file-list-query
-  ([] (file-list-query []))
+  ([] (file-list-query {}))
   ([extras]
    (merge extras {:model :files, :action :list})))
 
@@ -592,11 +592,11 @@
     (case model
       :files
       (case action
-        :delete (FileDeleteQuery->DriveRequest drive-service query)
         :list   (FileListQuery->DriveRequest drive-service query)
         :get    (FileGetQuery->DriveRequest drive-service query)
-        :update (FileUpdateQuery->DriveRequest drive-service query)
         :insert (FileInsertQuery->DriveRequest drive-service query))
+        :update (FileUpdateQuery->DriveRequest drive-service query)
+        :delete (FileDeleteQuery->DriveRequest drive-service query)
       :permissions
       (case action
         :list   (PermissionListQuery->DriveRequest drive-service query)

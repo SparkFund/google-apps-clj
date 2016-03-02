@@ -3,7 +3,9 @@
   (:require [clojure.core.typed :as t]
             [clojure.java.io :as io]
             [clojure.string :as string]
-            [google-apps-clj.credentials :as cred])
+            [google-apps-clj.credentials :as cred]
+            [google-apps-clj.google-drive.mime-types :as gdrive-mime]
+            [google-apps-clj.google-drive.constants :as gdrive-const])
   (:import (com.google.api.client.googleapis.batch BatchRequest
                                                    BatchCallback)
            (com.google.api.client.googleapis.json GoogleJsonError
@@ -369,17 +371,13 @@
 
 
 ;; Helpers for dealing with folders
-
-;Inserted folders have a special mime-type
-;see https://developers.google.com/drive/v3/web/folder
-(t/ann folder-mime-type t/Str)
-(def folder-mime-type "application/vnd.google-apps.folder")
+;; See also https://developers.google.com/drive/v3/web/folder
 
 (t/ann folder? [(t/HMap :mandatory {:mime-type t/Str}) -> t/Bool])
 (defn folder?
   "Predicate fn indicating if the given file map has the folder mime type"
   [file-map]
-  (= folder-mime-type (:mime-type file-map)))
+  (= gdrive-mime/folder (:mime-type file-map)))
 
 (t/ann folder-insert-query [FolderId t/Str -> FileInsertQuery])
 (defn folder-insert-query
@@ -387,7 +385,7 @@
   {:model      :files
    :action     :insert
    :parent-ids [parent-id]
-   :mime-type  folder-mime-type
+   :mime-type  gdrive-mime/folder
    :title      title})
 
 
@@ -452,14 +450,9 @@
 
 
 
-(t/ann root-id t/Str)
-(def root-id
-  "The id of the root folder"
-  "root")
 
-
-(t/ann build-request [cred/GoogleAuth Query -> Request])
-(defn- ^DriveRequest build-request
+(t/ann Query->DriveRequest [Drive Query -> DriveRequest])
+(defn- ^DriveRequest Query->DriveRequest
   "Converts a query into a stateful request object executable in the
    given google context. Queries are maps with the following required
    fields:
@@ -473,23 +466,22 @@
    :fields - a seq of keywords specifying the object projection
    :query - used to constrain a list of files
    :file-id - specifies the file for file-specific models and actions"
-  [google-ctx query]
-  (let [drive (build-drive-service google-ctx)
-        {:keys [model action]} query
+  [drive-service query]
+  (let [{:keys [model action]} query
         fields (format-fields-string query)]
     (case model
       :files
       (case action
-        :delete (FileDeleteQuery->DriveRequest drive query)
-        :list   (FileListQuery->DriveRequest drive query)
-        :get    (FileGetQuery->DriveRequest drive query)
-        :update (FileUpdateQuery->DriveRequest drive query)
-        :insert (FileInsertQuery->DriveRequest drive query))
+        :delete (FileDeleteQuery->DriveRequest drive-service query)
+        :list   (FileListQuery->DriveRequest drive-service query)
+        :get    (FileGetQuery->DriveRequest drive-service query)
+        :update (FileUpdateQuery->DriveRequest drive-service query)
+        :insert (FileInsertQuery->DriveRequest drive-service query))
       :permissions
       (case action
         :list
         (let [{:keys [file-id]} query
-              request (.list (.permissions drive) file-id)]
+              request (.list (.permissions drive-service) file-id)]
           (cond-doto ^DriveRequest request
             fields (.setFields fields)))
         :insert
@@ -500,7 +492,7 @@
                              (.setValue value)
                              (cond-doto (not (nil? with-link?))
                                (.setWithLink with-link?)))
-              request (doto (.insert (.permissions drive) file-id permission)
+              request (doto (.insert (.permissions drive-service) file-id permission)
                         (.setSendNotificationEmails false))]
           (cond-doto ^DriveRequest request
             fields (.setFields fields)))
@@ -508,7 +500,7 @@
         (let [{:keys [file-id permission-id role transfer-ownership?]} query
               permission (doto (Permission.)
                            (.setRole (name role)))
-              request (cond-doto (.update (.permissions drive)
+              request (cond-doto (.update (.permissions drive-service)
                                           file-id permission-id permission)
                         (not (nil? transfer-ownership?))
                         (.setTransferOwnership transfer-ownership?))]
@@ -516,7 +508,7 @@
             fields (.setFields fields)))
         :delete
         (let [{:keys [file-id permission-id]} query]
-          (.delete (.permissions drive) file-id permission-id))))))
+          (.delete (.permissions drive-service) file-id permission-id))))))
 
 (defprotocol Requestable
   (response-data
@@ -655,7 +647,8 @@
    results converted into clojure forms. If the response is paginated,
    all results are fetched and concatenated into a vector."
   [google-ctx query]
-  (let [request (build-request google-ctx query)
+  (let [drive-service (build-drive-service google-ctx)
+        request (Query->DriveRequest drive-service query)
         results (atom nil)]
     (loop []
       (let [response (.execute request)
@@ -684,7 +677,8 @@
    errors are given as GoogleJsonError objects in the responses."
   [google-ctx queries]
   ;; TODO partition queries into batches?
-  (let [requests (map (partial build-request google-ctx) queries)
+  (let [drive-service (build-drive-service google-ctx)
+        requests (map (partial Query->DriveRequest drive-service) queries)
         credential (cred/build-credential google-ctx)
         batch (BatchRequest. cred/http-transport credential)
         responses (atom (into [] (repeat (count requests) nil)))]
@@ -723,11 +717,6 @@
             (recur next-requests)))))
     @responses))
 
-(def batch-size
-  "Google internally unwraps batches and processes them concurrently. Batches
-   that are too large can cause the request to exceed Google's api rate limit,
-   which is applied to api requests, not http requests."
-  20)
 
 (defn execute!
   "Executes the given queries in the most efficient way, returning their
@@ -737,7 +726,7 @@
   (when (seq queries)
     (if (= 1 (count queries))
       [(execute-query! google-ctx (first queries))]
-      (let [batches (partition-all batch-size queries)]
+      (let [batches (partition-all gdrive-const/batch-size queries)]
         (doall (mapcat (partial execute-batch! google-ctx) batches))))))
 
 ;;;; Commands and their helpers

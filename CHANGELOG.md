@@ -1,6 +1,15 @@
 # google-apps-clj changes
 
 
+0.4.4 (2016-03-07)
+------------------
+
+**Features**
+
+* Drive: Allow opt-in uploading of files via [Direct Uploading](https://developers.google.com/api-client-library/java/google-api-java-client/media-upload#direct)
+which is much faster for small files (although Direct Uploads are not resumable).  See https://github.com/SparkFund/google-apps-clj/issues/15
+
+
 0.4.3 (2016-02-29)
 ------------------
 

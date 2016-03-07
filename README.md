@@ -8,7 +8,7 @@ Applications. This library is partially typed using `core.typed`
 If you're using Leiningen, just add this to your `project.clj`:
 
 ```clj
-[google-apps-clj "0.4.3"]
+[google-apps-clj "0.4.4"]
 ```
 
 Check out [CHANGELOG.md](CHANGELOG.md) to see what's been updated lately.

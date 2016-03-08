@@ -44,10 +44,10 @@
 (t/ann ^:no-check clojure.core/some? [t/Any -> t/Bool])
 
 (t/ann http-transport HttpTransport)
-(def http-transport (GoogleNetHttpTransport/newTrustedTransport))
+(def ^HttpTransport http-transport (GoogleNetHttpTransport/newTrustedTransport))
 
 (t/ann json-factory JsonFactory)
-(def json-factory (JacksonFactory/getDefaultInstance))
+(def ^JsonFactory json-factory (JacksonFactory/getDefaultInstance))
 
 
 (t/ann get-google-secret [GoogleCtx -> GoogleClientSecrets])
@@ -81,8 +81,7 @@
         auth-url (.build auth-request-url)
         _ (println "Please visit the following url and input the code "
                    "that appears on the screen: " auth-url)
-        auth-code (doto (read-line)
-                    assert)
+        auth-code (doto ^String (read-line) assert)
         token-request (doto (.newTokenRequest auth-flow auth-code)
                         assert
                         (.setRedirectUri "urn:ietf:wg:oauth:2.0:oob"))]
@@ -90,15 +89,18 @@
       assert)))
 
 (t/ann get-token-response [GoogleCtx -> GoogleTokenResponse])
-(defn get-token-response
+(defn ^GoogleTokenResponse get-token-response
   "Given a google-ctx configuration map, creates a GoogleTokenResponse Object
    by pulling data from the authorization map inside of the google-ctx"
   [google-ctx]
-  (let [auth-map (:auth-map google-ctx)]
+  (let [auth-map (:auth-map google-ctx)
+        access-token ^String (:access-token auth-map)
+        refresh-token ^String (:refresh-token auth-map)
+        token-type ^String (:token-type auth-map)]
     (doto (GoogleTokenResponse.)
-      (.setAccessToken (:access-token auth-map))
-      (.setRefreshToken (:refresh-token auth-map))
-      (.setTokenType (:token-type auth-map)))))
+      (.setAccessToken access-token)
+      (.setRefreshToken refresh-token)
+      (.setTokenType token-type))))
 
 (t/ann credential-with-scopes [GoogleCredential OAuthScopes -> GoogleCredential])
 (defn ^GoogleCredential credential-with-scopes
@@ -108,7 +110,7 @@
   (.createScoped cred (set scopes)))
 
 (t/ann credential-from-json-stream [t/Any -> GoogleCredential])
-(defn credential-from-json-stream
+(defn ^GoogleCredential credential-from-json-stream
   "Consumes an input stream containing JSON describing a Google API credential
   `stream` can be anything that can be handled by `clojure.java.io/input-stream`"
   [stream]
@@ -116,7 +118,7 @@
     (GoogleCredential/fromStream input-stream)))
 
 (t/ann credential-from-json [t/Str -> GoogleCredential])
-(defn credential-from-json
+(defn ^GoogleCredential credential-from-json
   "Builds a GoogleCredential from a raw JSON string describing a Google API credential"
   [^String cred-json]
   (let [charset (Charset/forName "UTF-8")

@@ -200,12 +200,19 @@
 
 ;Return type when invoking `.execute` on one of the `Request` types, above
 (t/defalias Response
-  (t/U Void
+  (t/U nil
        File
-       FileList
        Permission
+       FileList
        PermissionList))
 
+;A processed response
+(t/defalias ResponseData
+  (t/U nil
+       File
+       Permission
+       (java.util.List File)
+       (java.util.List Permission)))
 
 ;; Helper methods
 
@@ -537,9 +544,9 @@
 (t/ann permission-delete-query [FileId PermissionId -> PermissionDeleteQuery])
 (defn permission-delete-query
   [file-id permission-id]
-  {:model :permissions
-   :action :delete
-   :file-id file-id
+  {:model         :permissions
+   :action        :delete
+   :file-id       file-id
    :permission-id permission-id})
 
 (t/ann PermissionDeleteQuery->DriveRequest [Drive PermissionDeleteQuery -> Drive$Permissions$Delete])
@@ -577,21 +584,20 @@
     (case model
       :files
       (case action
-        :list   (FileListQuery->DriveRequest drive-service query)
-        :get    (FileGetQuery->DriveRequest drive-service query)
+        :list (FileListQuery->DriveRequest drive-service query)
+        :get (FileGetQuery->DriveRequest drive-service query)
         :insert (FileInsertQuery->DriveRequest drive-service query))
-        :update (FileUpdateQuery->DriveRequest drive-service query)
-        :delete (FileDeleteQuery->DriveRequest drive-service query)
+      :update (FileUpdateQuery->DriveRequest drive-service query)
+      :delete (FileDeleteQuery->DriveRequest drive-service query)
       :permissions
       (case action
-        :list   (PermissionListQuery->DriveRequest drive-service query)
+        :list (PermissionListQuery->DriveRequest drive-service query)
         :insert (PermissionInsertQuery->DriveRequest drive-service query)
         :update (PermissionUpdateQuery->DriveRequest drive-service query)
         :delete (PermissionDeleteQuery->DriveRequest drive-service query)))))
 
 
-
-(t/ann response-data [t/Any -> t/Any])
+(t/ann ^:no-check response-data [Response -> ResponseData])
 (defn response-data
   [response]
   (cond
@@ -617,56 +623,47 @@
 (t/ann ^:no-check camel->kebab [t/Str -> t/Str])
 (defn- camel->kebab
   [^String camel]
-  (->> camel
-       (reduce
-         (fn [^StringBuffer buf, ^Character ch]
-           (let [lc (Character/toLowerCase ch)]
-             ;if char is uppercase and NOT the first char, add a dash
-             (when (and (not= ch lc) (> (.length buf) 0))
-               (.append buf \-))
-             ;always add the (lowercased) char
-             (.append buf lc)))
-         (StringBuffer.))
-       (.toString)))
+  (let [expander (fn [^StringBuffer buf, ^Character ch]
+                   (let [lc (Character/toLowerCase ch)]
+                     ;if char is uppercase and NOT the first char, add a dash
+                     (when (and (not= ch lc) (> (.length buf) 0))
+                       (.append buf \-))
+                     ;always add the (lowercased) char
+                     (.append buf lc)))
+        expanded (reduce expander (StringBuffer.) camel)]
+    (.toString ^StringBuffer expanded)))
 
 
-(defprotocol Response
+(defprotocol ConvertResponse
   (convert-response
-   [_]
-   "Convert the google response object into a clojure form"))
+    [_]
+    "Convert the google response object into a clojure form"))
 
-(extend-protocol Response
+(extend-protocol ConvertResponse
   java.util.List
-  (convert-response [l]
-    (mapv convert-response l))
-  com.google.api.client.util.ArrayMap
-  (convert-response [m]
-    m)
+  (convert-response [l] (mapv convert-response l))
   com.google.api.client.json.GenericJson
   (convert-response [m]
     (->> (keys m)
-         (map (fn [field]
-                (let [value (convert-response (get m field))
-                      field (if-not (true? value)
-                              (-> field camel->kebab keyword)
-                              (-> field camel->kebab (str "?") keyword))]
-                  [field value])))
+         (map (fn [^String field-name]
+                (let [value (convert-response (get m field-name))
+                      key (if-not (true? value)
+                            (-> field-name camel->kebab keyword)
+                            (-> field-name camel->kebab (str "?") keyword))]
+                  [key value])))
          (into {})))
+  com.google.api.client.util.ArrayMap
+  (convert-response [m] m)
   com.google.api.client.util.DateTime
-  (convert-response [dt]
-    ;; TODO convert to inst or jodatime
-    dt)
+  (convert-response [dt] dt)
   java.lang.String
-  (convert-response [s]
-    s)
+  (convert-response [s] s)
   java.lang.Long
-  (convert-response [l]
-    l)
+  (convert-response [l] l)
   java.lang.Boolean
-  (convert-response [b]
-    b)
+  (convert-response [b] b)
   nil
-  (convert-response [_]))
+  (convert-response [_] nil))
 
 (t/ann rate-limit-exceeded? [GoogleJsonError -> t/Bool])
 (defn- rate-limit-exceeded?
@@ -689,7 +686,7 @@
         request (Query->DriveRequest drive-service query)
         results (atom nil)]
     (loop []
-      (let [response (.execute request)
+      (let [response (.execute ^DriveRequest request)
             data (convert-response (response-data response))]
         (if (next-page! request response)
           (do
@@ -809,7 +806,7 @@
   [google-ctx file-id authorization]
   (let [{:keys [principal role searchable?]} authorization
         extant (get-permissions! google-ctx file-id principal)
-        principal-id (atom nil) ; TODO this could be a volatile
+        principal-id (atom nil)                             ; TODO this could be a volatile
         ids-to-delete (atom [])]
     ;; [principal withLink] seem to be a unique key within a file
     (doseq [permission extant]
@@ -940,11 +937,11 @@
              fields (if (seq path')
                       [:id]
                       fields)
-             query (cond-> {:model :files
+             query (cond-> {:model  :files
                             :action :list
-                            :query q}
-                     (seq fields)
-                     (assoc :fields fields))
+                            :query  q}
+                           (seq fields)
+                           (assoc :fields fields))
              results (execute-query! google-ctx query)
              total (count results)]
          (when (seq results)

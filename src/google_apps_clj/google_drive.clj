@@ -188,15 +188,23 @@
        PermissionUpdateQuery))
 
 (t/defalias Request
-  (t/U Drive$Files$Delete
+  (t/U Drive$Files$List
        Drive$Files$Get
        Drive$Files$Insert
-       Drive$Files$List
        Drive$Files$Update
-       Drive$Permissions$Delete
-       Drive$Permissions$Insert
+       Drive$Files$Delete
        Drive$Permissions$List
-       Drive$Permissions$Update))
+       Drive$Permissions$Insert
+       Drive$Permissions$Update
+       Drive$Permissions$Delete))
+
+;Return type when invoking `.execute` on one of the `Request` types, above
+(t/defalias Response
+  (t/U Void
+       File
+       FileList
+       Permission
+       PermissionList))
 
 
 ;; Helper methods
@@ -279,21 +287,6 @@
                    (= "domain" perm-type))
       :anyone (and (= "anyone" perm-type))
       false)))
-
-
-;TODO: remove me
-(defmacro cond-doto
-  [x & forms]
-  (assert (even? (count forms)))
-  (let [gx (gensym)]
-    `(let [~gx ~x]
-       ~@(map (fn [[test expr]]
-                (if (seq? expr)
-                  `(when ~test (~(first expr) ~gx ~@(next expr)))
-                  `(when ~test (~expr ~gx))))
-              (partition 2 forms))
-       ~gx)))
-
 
 
 ;; Deleting a single file
@@ -572,8 +565,8 @@
                   assert))))
 
 
-(t/ann ^:no-check Query->DriveRequest [Drive Query -> DriveRequest])
-(defn- ^DriveRequest Query->DriveRequest
+(t/ann ^:no-check Query->DriveRequest [Drive Query -> Request])
+(defn- Query->DriveRequest
   "Converts a Query map into an instance of DriveRequest.  All Query maps have at least
   a `:model` and an `:action` key describing the type of operation that they represent.
   The exact class returned depends on the `:model` and `:action` keys of the Query map,
@@ -597,87 +590,45 @@
         :delete (PermissionDeleteQuery->DriveRequest drive-service query)))))
 
 
-(defprotocol Requestable
-  (response-data
-   [request response]
-   "Extracts the good bit from the response")
-  (next-page!
-   [request response]
-   "Mutates the request to retrieve the next page of results if supported and
-    present"))
 
-(extend-protocol Requestable
-  Drive$Files$Delete
-  (next-page! [request response])
-  (response-data [request response]
-    response)
+(t/ann response-data [t/Any -> t/Any])
+(defn response-data
+  [response]
+  (cond
+    (instance? FileList response) (.getItems ^FileList response)
+    (instance? PermissionList response) (.getItems ^PermissionList response)
+    :otherwise response))
 
-  Drive$Files$Get
-  (next-page! [request response])
-  (response-data [request response]
-    response)
+(t/ann next-page! [DriveRequest Response -> (t/Option Request)])
+(defn next-page!
+  [request response]
+  (cond
+    ;file lists can be paginated, so we'll return a new request object
+    ;primed with a new page token
+    (and (instance? Drive$Files$List request)
+         (instance? FileList response))
+    (when-let [page-token (.getNextPageToken ^FileList response)]
+      (.setPageToken ^Drive$Files$List request page-token)
+      request)
+    ;nothing else has a notion of having a "next" page
+    :otherwise nil))
 
-  Drive$Files$Insert
-  (next-page! [request response])
-  (response-data [request response]
-    response)
 
-  Drive$Files$List
-  (next-page! [request response]
-    (when response
-      (when-let [page-token (.getNextPageToken ^FileList response)]
-        (.setPageToken request page-token))))
-  (response-data [request response]
-    (when response
-      (.getItems ^FileList response)))
-
-  Drive$Files$Update
-  (next-page! [request response])
-  (response-data [request response]
-    response)
-
-  Drive$Permissions$Delete
-  (next-page! [request response])
-  (response-data [request response]
-    response)
-
-  Drive$Permissions$Insert
-  (next-page! [request response])
-  (response-data [request response]
-    response)
-
-  Drive$Permissions$List
-  (next-page! [request response])
-  (response-data [request response]
-    (when response
-      (.getItems ^PermissionList response)))
-
-  Drive$Permissions$Update
-  (next-page! [request response])
-  (response-data [request response]
-    response))
-
-;; TODO perhaps validate the codomain is a subset of the keyword domain
-(t/ann camel->kebab [t/Str -> t/Str])
+(t/ann ^:no-check camel->kebab [t/Str -> t/Str])
 (defn- camel->kebab
-  [camel]
-  (let [accum (StringBuffer.)]
-    (loop [[^Character c & cs] camel]
-      (if (not c)
-        (.toString accum)
-        (let [c' (Character/toLowerCase c)]
-          (when-not (= c' c)
-            (.append accum \-))
-          (.append accum c')
-          (recur cs))))
-    (.toString accum)))
+  [^String camel]
+  (->> camel
+       (reduce
+         (fn [^StringBuffer buf, ^Character ch]
+           (let [lc (Character/toLowerCase ch)]
+             ;if char is uppercase and NOT the first char, add a dash
+             (when (and (not= ch lc) (> (.length buf) 0))
+               (.append buf \-))
+             ;always add the (lowercased) char
+             (.append buf lc)))
+         (StringBuffer.))
+       (.toString)))
 
-(t/ann convert-bean [java.util.Map -> (t/HMap)])
-(defn- convert-bean
-  [bean]
-  (->> (keys bean)
-       (map (juxt (comp keyword camel->kebab) (partial get bean)))
-       (into {})))
 
 (defprotocol Response
   (convert-response
@@ -739,7 +690,7 @@
         results (atom nil)]
     (loop []
       (let [response (.execute request)
-            data (convert-response (response-data request response))]
+            data (convert-response (response-data response))]
         (if (next-page! request response)
           (do
             (swap! results (fn [extant] (into (or extant []) data)))
@@ -775,7 +726,7 @@
           (.queue request batch GoogleJsonErrorContainer
                   (reify BatchCallback
                     (onSuccess [_ response headers]
-                      (let [data (convert-response (response-data request response))]
+                      (let [data (convert-response (response-data response))]
                         (if (next-page! request response)
                           (do
                             (swap! next-requests assoc i request)

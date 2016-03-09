@@ -634,34 +634,37 @@
     (.toString ^StringBuffer expanded)))
 
 
-(defprotocol ConvertResponse
-  (convert-response
-    [_]
-    "Convert the google response object into a clojure form"))
+(t/ann
+  ^:no-check convert-response
+  (t/IFn [java.util.Collection -> (t/Vec)]
+         [java.util.Map -> (t/HMap)]
+         [java.lang.Number -> java.lang.Number]
+         [java.lang.String -> java.lang.String]
+         [java.lang.Boolean -> java.lang.Boolean]
+         [clojure.lang.Keyword -> clojure.lang.Keyword]
+         [java.util.Date -> java.util.Date]
+         [com.google.gdata.data.DateTime -> com.google.gdata.data.DateTime]
+         [com.google.api.client.util.DateTime -> com.google.api.client.util.DateTime]
+         [nil -> nil]))
+(defn convert-response
+  "Converts a plain Google response object (usually something like com.google.api.client.util.ArrayMap,
+  com.google.api.client.json.GenericJson, or a collection of the same) into Clojure-y maps and vecs and whatnot.
+  Some types that are already Clojure-friendly will be passed through unchanged (like Number, String, Boolean, nil, etc)
+  Maps with string keys will have those strings converted into kebab-case keywords (e.g. \"fooBar\" -> :foo-bar)"
+  [pojo]
+  (when pojo
+    (condp instance? pojo
+      ;transform each element of lists
+      java.util.Collection (mapv convert-response pojo)
+      ;rewrite map keys as kebob keywords
+      java.util.Map (->> (keys pojo)
+                         (map (fn [^String k]
+                                [(if (string? k) (keyword (camel->kebab k)) k)
+                                 (convert-response (get pojo k))]))
+                         (into {}))
+      ;otherwise just pass through pojo unaltered
+      pojo)))
 
-(extend-protocol ConvertResponse
-  java.util.List
-  (convert-response [l] (mapv convert-response l))
-  com.google.api.client.json.GenericJson
-  (convert-response [m]
-    (->> (keys m)
-         (map (fn [^String field-name]
-                (let [k (keyword (camel->kebab field-name))
-                      v (convert-response (get m field-name))]
-                  [k v])))
-         (into {})))
-  com.google.api.client.util.ArrayMap
-  (convert-response [m] m)
-  com.google.api.client.util.DateTime
-  (convert-response [dt] dt)
-  java.lang.String
-  (convert-response [s] s)
-  java.lang.Long
-  (convert-response [l] l)
-  java.lang.Boolean
-  (convert-response [b] b)
-  nil
-  (convert-response [_] nil))
 
 (t/ann rate-limit-exceeded? [GoogleJsonError -> t/Bool])
 (defn- rate-limit-exceeded?

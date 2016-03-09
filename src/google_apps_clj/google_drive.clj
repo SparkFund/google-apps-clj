@@ -646,11 +646,9 @@
   (convert-response [m]
     (->> (keys m)
          (map (fn [^String field-name]
-                (let [value (convert-response (get m field-name))
-                      key (if-not (true? value)
-                            (-> field-name camel->kebab keyword)
-                            (-> field-name camel->kebab (str "?") keyword))]
-                  [key value])))
+                (let [k (keyword (camel->kebab field-name))
+                      v (convert-response (get m field-name))]
+                  [k v])))
          (into {})))
   com.google.api.client.util.ArrayMap
   (convert-response [m] m)

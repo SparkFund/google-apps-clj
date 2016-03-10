@@ -1,7 +1,8 @@
 # google-apps-clj
 
-A Clojure library that wraps the Google Java API for different Google
-Applications. This library is partially typed using `core.typed`
+A Clojure library that wraps the Google Java API for different Google Applications.
+
+This library is partially typed using `core.typed`.  Run `lein typed check` to type-check the library's code.
 
 ## Installing
 

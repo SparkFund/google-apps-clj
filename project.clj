@@ -9,8 +9,13 @@
                  [com.google.apis/google-api-services-drive "v2-rev168-1.20.0"]
                  [com.google.gdata/core "1.47.1" :exclusions [org.apache.httpcomponents/httpclient
                                                               com.google.code.findbugs/jsr305]]]
+  :plugins [[lein-typed "0.3.5"]]
   :repl-options {:init-ns google-apps-clj.repl}
   :test-selectors {:integration :integration
                    :all (constantly true)
                    :default (complement :integration)}
+  :core.typed {:check [google-apps-clj.credentials
+                       google-apps-clj.google-calendar
+                       google-apps-clj.google-drive
+                       google-apps-clj.google-sheets]}
   :pedantic? :abort)

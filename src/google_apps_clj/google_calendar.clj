@@ -7,7 +7,7 @@
   (:import (com.google.api.client.util DateTime)
            (com.google.api.services.calendar.model Event
                                                    EventAttendee
-                                                   EventDateTime)
+                                                   EventDateTime Events)
            (com.google.api.services.calendar Calendar
                                              Calendar$Builder
                                              Calendar$Events$Insert
@@ -99,7 +99,7 @@
                       (.setSingleEvents true))
         days-events (doto (.execute list-events)
                       assert)]
-    (tu/ignore-with-unchecked-cast (doto (.getItems days-events)
+    (tu/ignore-with-unchecked-cast (doto (.getItems ^Events days-events)
                                      assert)
                                    (t/Seq Event))))
 
@@ -133,6 +133,6 @@
                       (.setSingleEvents true))
         days-events (doto (.execute list-events)
                       assert)]
-    (tu/ignore-with-unchecked-cast (doto (.getItems days-events)
+    (tu/ignore-with-unchecked-cast (doto (.getItems ^Events days-events)
                                      assert)
                                    (t/Seq Event))))

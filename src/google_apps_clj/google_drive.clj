@@ -39,14 +39,12 @@
       Permission
       PermissionList)))
 
-;;; TODO this does not type check now due to protocol (ab)use and general
-;;; unfamiliarity with types when I first rewrote it
-
-
-;; General type annotations for external things
+;;General type annotations for external things
+;;Needed to keep the type checker happy
 
 (t/ann ^:no-check clojure.core/slurp [java.io.InputStream -> String])
 (t/ann ^:no-check clojure.java.io/input-stream [t/Any -> java.io.InputStream])
+(t/ann ^:no-check com.google.api.client.googleapis.json.GoogleJsonError/getErrors [-> (java.util.List GoogleJsonError$ErrorInfo)])
 
 (t/non-nil-return com.google.api.services.drive.Drive/files :all)
 (t/non-nil-return com.google.api.services.drive.Drive$Files/delete :all)
@@ -77,7 +75,7 @@
 (t/defalias FileUploadContent t/Any)
 (t/defalias PermissionId t/Str)
 (t/defalias Role (t/U ':owner ':writer ':reader))
-(t/defalias PermissionType (t/U ':user ':group ':domain ':anyone))
+(t/defalias PermissionType (t/U nil ':user ':group ':domain ':anyone))
 
 
 (t/defalias FileDeleteQuery
@@ -199,7 +197,7 @@
        Drive$Permissions$Delete))
 
 ;Return type when invoking `.execute` on one of the `Request` types, above
-(t/defalias Response
+(t/defalias ResponseRaw
   (t/U nil
        File
        Permission
@@ -213,6 +211,18 @@
        Permission
        (java.util.List File)
        (java.util.List Permission)))
+
+(t/defalias QueryResult
+  (t/U (t/Seqable QueryResult)
+       (t/HMap)
+       java.lang.Number
+       java.lang.String
+       java.lang.Boolean
+       clojure.lang.Keyword
+       java.util.Date
+       com.google.gdata.data.DateTime
+       com.google.api.client.util.DateTime
+       nil))
 
 ;; Helper methods
 
@@ -263,7 +273,7 @@
         fields (when (seq fields-seq) (string/join "," fields-seq))]
     fields))
 
-(t/ann guess-principal-type [t/Str -> PermissionType])
+(t/ann guess-principal-type [(t/Option t/Str) -> PermissionType])
 (defn- guess-principal-type
   [^String principal]
   (cond
@@ -283,7 +293,7 @@
       "user" email-address)))
 
 
-(t/ann permission-has-principal? [t/Str t/Any -> t/Bool])
+(t/ann permission-has-principal? [(t/Option t/Str) t/Any -> t/Bool])
 (defn permission-has-principal?
   [^String principal, permission]
   (let [perm-type (:type permission)]
@@ -597,7 +607,7 @@
         :delete (PermissionDeleteQuery->DriveRequest drive-service query)))))
 
 
-(t/ann ^:no-check response-data [Response -> ResponseData])
+(t/ann ^:no-check response-data [ResponseRaw -> ResponseData])
 (defn response-data
   [response]
   (cond
@@ -605,7 +615,7 @@
     (instance? PermissionList response) (.getItems ^PermissionList response)
     :otherwise response))
 
-(t/ann next-page! [DriveRequest Response -> (t/Option Request)])
+(t/ann next-page! [DriveRequest ResponseRaw -> (t/Option Request)])
 (defn next-page!
   [request response]
   (cond
@@ -636,7 +646,7 @@
 
 (t/ann
   ^:no-check convert-response
-  (t/IFn [java.util.Collection -> (t/Vec)]
+  (t/IFn [java.util.Collection -> (t/Seqable QueryResult)]
          [java.util.Map -> (t/HMap)]
          [java.lang.Number -> java.lang.Number]
          [java.lang.String -> java.lang.String]
@@ -665,8 +675,7 @@
       ;otherwise just pass through pojo unaltered
       pojo)))
 
-
-(t/ann rate-limit-exceeded? [GoogleJsonError -> t/Bool])
+(t/ann ^:no-check rate-limit-exceeded? [GoogleJsonError -> t/Bool])
 (defn- rate-limit-exceeded?
   [^GoogleJsonError error]
   (and (= 403 (.getCode error))
@@ -678,6 +687,8 @@
                    false)))
              (.getErrors error))))
 
+
+(t/ann ^:no-check execute-query! [cred/GoogleAuth Query -> QueryResult])
 (defn execute-query!
   "Executes the given query in the google context and returns the
    results converted into clojure forms. If the response is paginated,
@@ -699,6 +710,7 @@
                              data))))))
     @results))
 
+(t/ann ^:no-check execute-batch! [cred/GoogleAuth (t/Seqable Query) -> (t/Seqable QueryResult)])
 (defn execute-batch!
   "Execute the given queries in a batch, returning their responses,
    converted into clojure forms, in the same order as the queries. If
@@ -753,7 +765,7 @@
             (recur next-requests)))))
     @responses))
 
-
+(t/ann ^:no-check execute! [cred/GoogleAuth (t/Seqable Query) -> (t/Seqable QueryResult)])
 (defn execute!
   "Executes the given queries in the most efficient way, returning their
    results in a seq of clojure forms. Note the queries may be processed
@@ -767,20 +779,22 @@
 
 ;;;; Commands and their helpers
 
-;TODO: rename
-;TODO: annotate
+(t/ann ^:no-check get-permissions! (t/IFn [cred/GoogleAuth FileId -> QueryResult]
+                                          [cred/GoogleAuth FileId (t/Option t/Str) -> QueryResult]))
 (defn get-permissions!
   "Returns the permissions granted on the given file, filtered for those
    explicitly granted to the principal if given"
   ([google-ctx file-id]
-   (get-permissions! google-ctx file-id false))
-  ([google-ctx file-id principal]
-   (let [query permission-list-query
+   (get-permissions! google-ctx file-id nil))
+  ([google-ctx, file-id, ^String principal]
+   (let [query (permission-list-query file-id)
          permissions (execute-query! google-ctx query)]
      (if (some? principal)
-       (filter (partial permission-has-principal? principal) permissions)
+       (filter #(permission-has-principal? principal %) permissions)
        permissions))))
 
+;TODO: better annotations
+(t/ann ^:no-check summarize-permissions [(t/Seqable (t/HMap)) -> (t/HMap)])
 (defn summarize-permissions
   "Returns a map of the sets of principals in the given permissions grouped by
    role"
@@ -792,6 +806,8 @@
           {}
           permissions))
 
+;TODO: better annotations
+(t/ann ^:no-check assign! [cred/GoogleAuth FileId (t/HMap) -> (t/HMap)])
 (defn assign!
   "Authorize the principal with the role on the given file. The principal will
    not be able to discover the file via google unless the searchable? field is
@@ -824,6 +840,8 @@
         (execute-query! google-ctx insert)))
     nil))
 
+;TODO: better annotations
+(t/ann ^:no-check revoke! [cred/GoogleAuth FileId t/Str -> nil])
 (defn revoke!
   "Revoke all authorizations for the given principal on the given file. The
    principal may be the literal \"anyone\", an email address of a user or
@@ -839,13 +857,15 @@
 
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
-
+;TODO: better annotations
+(t/ann create-folder! [cred/GoogleAuth FolderId t/Str -> QueryResult])
 (defn create-folder!
   "Create a folder with the given title in the given parent folder"
   [google-ctx parent-id title]
   (execute-query! google-ctx (folder-insert-query parent-id title)))
 
-
+;TODO: better annotations
+(t/ann move-file! [cred/GoogleAuth FolderId FileId -> QueryResult])
 (defn move-file!
   "Moves a file to a folder. This returns true if successful, false
    if forbidden, and raises otherwise."
@@ -870,7 +890,9 @@
    (let [query-map (file-insert-query folder-id content file-title extra-args)]
      (execute-query! google-auth query-map))))
 
-;TODO: annotate
+;TODO: better annotations
+(t/ann ^:no-check download-file! (t/IFn [cred/GoogleAuth (t/HMap) -> QueryResult]
+                                        [cred/GoogleAuth (t/HMap) (t/Option t/Str) -> QueryResult]))
 (defn download-file!
   "Downloads the contents of the given file as an inputstream, or nil if the
    file is not available or is not available in the given mime type."
@@ -896,16 +918,17 @@
            (.executeMediaAsInputStream (.get files-svc ^String (:id file)))))))))
 
 
-;TODO: move me up next to query construction?
-;TODO: annotate
+;TODO: better annotations
+(t/ann delete-file! [cred/GoogleAuth FileId -> QueryResult])
 (defn delete-file!
   "Permanently deletes the given file. If the file is a folder, this also
    deletes all of its descendents."
   [google-ctx file-id]
   (execute-query! google-ctx (file-delete-query file-id)))
 
-;TODO: move me up next to query construction?
-;TODO: annotate
+;TODO: better annotations
+(t/ann list-files! (t/IFn [cred/GoogleAuth FolderId -> QueryResult]
+                          [cred/GoogleAuth FolderId (t/HMap) -> QueryResult]))
 (defn list-files!
   "Returns a seq of files in the given folder"
   ([google-ctx folder-id]
@@ -913,14 +936,16 @@
   ([google-ctx folder-id extras]
    (execute-query! google-ctx (folder-list-files-query folder-id extras))))
 
-;TODO: move me up next to query construction?
-;TODO: annotate
+;TODO: better annotations
+(t/ann get-file! [cred/GoogleAuth FileId -> QueryResult])
 (defn get-file!
   "Returns the metadata for the given file"
   [google-ctx file-id]
   (execute-query! google-ctx (file-get-query file-id)))
 
-;TODO: clean up and maybe pull into separate parts?
+;TODO: better annotations
+(t/ann ^:no-check find-file! (t/IFn [cred/GoogleAuth FolderId (t/Seqable t/Str) -> QueryResult]
+                                    [cred/GoogleAuth FolderId (t/Seqable t/Str) (t/Option FieldList) -> QueryResult]))
 (defn find-file!
   "Given a path as a seq of titles relative to the given folder id,
    returns the file if there is one. If any title matches more than one

@@ -509,7 +509,7 @@
     ;build up the Java permission object
     (.setValue permission value)
     (when role (.setRole permission (name role)))
-    (when type (.setType permission (name role)))
+    (when type (.setType permission (name type)))
     (when (some? with-link?) (.setWithLink permission (boolean with-link?)))
     ;now make the request
     (let [permission-svc (.permissions drive-service)

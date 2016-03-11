@@ -596,9 +596,9 @@
       (case action
         :list (FileListQuery->DriveRequest drive-service query)
         :get (FileGetQuery->DriveRequest drive-service query)
-        :insert (FileInsertQuery->DriveRequest drive-service query))
-      :update (FileUpdateQuery->DriveRequest drive-service query)
-      :delete (FileDeleteQuery->DriveRequest drive-service query)
+        :insert (FileInsertQuery->DriveRequest drive-service query)
+        :update (FileUpdateQuery->DriveRequest drive-service query)
+        :delete (FileDeleteQuery->DriveRequest drive-service query))
       :permissions
       (case action
         :list (PermissionListQuery->DriveRequest drive-service query)

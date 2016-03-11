@@ -1,20 +1,19 @@
 (ns google-apps-clj.google-drive-test
   (:require [clojure.edn :as edn]
             [clojure.test :refer :all]
-            [google-apps-clj.google-drive :refer :all]))
+            [google-apps-clj.google-drive :refer :all]
+            [google-apps-clj.credentials :as gauth]))
 
 (deftest ^:integration test-scenario
-  (let [creds (assoc (edn/read-string (slurp "google-creds.edn"))
-                     :read-timeout 60000)
+  (let [creds (gauth/default-credential ["https://www.googleapis.com/auth/drive"])
         q! (partial execute-query! creds)
         folder-name (name (gensym "google-apps-clj-google-drive-"))
         folder (create-folder! creds "root" folder-name)
         folder-id (:id folder)
-        upload-request (upload-file folder-id
-                                    "test-title"
-                                    "test-description"
-                                    "text/plain"
-                                    (.getBytes "test-body" "UTF-8"))]
+        upload-content (.getBytes "test-body" "UTF-8")
+        upload-request (file-insert-query folder-id upload-content "test-title"
+                                          {:description "test-description"
+                                           :mime-type "text/plain"})]
     (try
       (testing "creates a folder"
         (is folder-id)
@@ -44,7 +43,7 @@
                    (map (juxt :role :type) (get-permissions! creds file-id)))))
           (testing "managing authorization"
             (assign! creds file-id {:principal "dev@sparkfund.co"
-                                    :role :reader
+                                    :role :reader ;TODO: figure out why Google rejects "reader" role
                                     :searchable? false})
             (is (= [["owner" "user"]
                     ["reader" "group"]]

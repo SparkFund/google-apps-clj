@@ -11,7 +11,8 @@
                                               SpreadsheetEntry
                                               SpreadsheetFeed
                                               WorksheetEntry
-                                              WorksheetFeed)
+                                              WorksheetFeed
+                                              CustomElementCollection)
            (com.google.gdata.data ILink$Rel
                                   ILink$Type
                                   PlainTextConstruct)
@@ -20,9 +21,10 @@
                                                 SpreadsheetService
                                                 WorksheetQuery)
            (com.google.gdata.data.batch BatchOperationType
-                                        BatchUtils)))
+                                        BatchUtils)
+           (java.net URL)))
 
-(t/ann ^:no-check clojure.java.io/as-url [t/Str -> java.net.URL])
+(t/ann ^:no-check clojure.java.io/as-url [t/Str -> URL])
 
 (def spreadsheet-url
   "The url needed and used to recieve a spreadsheet feed"
@@ -55,10 +57,11 @@
 (defn find-spreadsheet-by-id
   "Given a SpreadsheetService and the id of a spreadsheet, find the SpreadsheetEntry
    with the given id in a map, or an error message in a map"
-  [sheet-service id]
+  [^SpreadsheetService sheet-service id]
   (let [sheet-url (io/as-url (str spreadsheet-url "/" id))
+        etag nil
         entry (tu/ignore-with-unchecked-cast
-               (.getEntry sheet-service sheet-url SpreadsheetEntry nil)
+               (.getEntry sheet-service sheet-url SpreadsheetEntry ^String etag)
                SpreadsheetEntry)]
     (if entry
       {:spreadsheet entry}
@@ -95,10 +98,11 @@
         spreadsheet (find-spreadsheet-by-title sheet-service spreadsheet-name)]
     (if (contains? spreadsheet :error)
       spreadsheet
-      (let [spreadsheet-id (.getId (:spreadsheet spreadsheet))
+      (let [spreadsheet-entry ^SpreadsheetEntry (:spreadsheet spreadsheet)
+            spreadsheet-id (.getId spreadsheet-entry)
             spreadsheet-id (subs spreadsheet-id (inc (.lastIndexOf spreadsheet-id "/")))
-            worksheets (seq (.getWorksheets (:spreadsheet spreadsheet)))
-            get-id (fn [worksheet-entry]
+            worksheets (seq (.getWorksheets spreadsheet-entry))
+            get-id (fn [^WorksheetEntry worksheet-entry]
                      (let [worksheet-id (.getId worksheet-entry)]
                        [(subs worksheet-id (inc (.lastIndexOf worksheet-id "/")))
                         (.getPlainText (.getTitle worksheet-entry))]))
@@ -164,10 +168,11 @@
 (defn find-worksheet-by-id
   "Given a SpreadsheetService, SpreadSheetEntry and the id of a worksheet, find
    the WorksheetEntry with the given id in a map, or an error message in a map"
-  [sheet-service spreadsheet id]
+  [^SpreadsheetService sheet-service spreadsheet id]
   (let [url (io/as-url (str (.getWorksheetFeedUrl ^SpreadsheetEntry spreadsheet) "/" id))
+        etag nil
         entry (tu/ignore-with-unchecked-cast
-               (.getEntry sheet-service url WorksheetEntry nil)
+               (.getEntry sheet-service url WorksheetEntry ^String etag)
                WorksheetEntry)]
     (if entry
       {:worksheet entry}
@@ -231,14 +236,16 @@
    changes the value in the cell location inside of the given
    worksheet inside of the spreadsheet, or returns an error map"
   [google-ctx spreadsheet-id worksheet-id [row col value]]
-  (let [sheet-service (build-sheet-service google-ctx)
+  (let [sheet-service ^SpreadsheetService (build-sheet-service google-ctx)
         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        spreadsheet-entry ^SpreadsheetEntry (:spreadsheet spreadsheet)
         worksheet (if (contains? spreadsheet :error)
                     spreadsheet
-                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
+                    (find-worksheet-by-id sheet-service spreadsheet-entry worksheet-id))
+        worksheet-entry ^WorksheetEntry (:worksheet worksheet)
         cell-feed-url (if (contains? worksheet :error)
                         worksheet
-                        {:cell-feed-url (.getCellFeedUrl (:worksheet worksheet))})]
+                        {:cell-feed-url (.getCellFeedUrl worksheet-entry)})]
     (if (contains? cell-feed-url :error)
       cell-feed-url
       (let [cell-feed-url (:cell-feed-url cell-feed-url)
@@ -260,22 +267,24 @@
    in the sheet has either one of those properties
    NOTE: headers are the values in the first row of a Google Spreadsheet"
   [google-ctx spreadsheet-id worksheet-id row-values]
-  (let [sheet-service (build-sheet-service google-ctx)
+  (let [sheet-service ^SpreadsheetService (build-sheet-service google-ctx)
         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        spreadsheet-entry ^SpreadsheetEntry (:spreadsheet spreadsheet)
         worksheet (if (contains? spreadsheet :error)
                     spreadsheet
-                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
+                    (find-worksheet-by-id sheet-service spreadsheet-entry worksheet-id))
+        worksheet-entry ^WorksheetEntry (:worksheet worksheet)
         list-feed-url (if (contains? worksheet :error)
                         worksheet
-                        {:list-feed-url (.getListFeedUrl (:worksheet worksheet))})
+                        {:list-feed-url (.getListFeedUrl worksheet-entry)})
         list-feed (if (contains? list-feed-url :error)
                     list-feed-url
-                    {:list-feed (.getFeed sheet-service (:list-feed-url list-feed-url) ListFeed)})
+                    {:list-feed (.getFeed sheet-service ^URL (:list-feed-url list-feed-url) ListFeed)})
         row (ListEntry.)
         headers (keys row-values)
         update-value-by-header (fn [header]
-                                   (.setValueLocal (.getCustomElements row)
-                                                   header (get row-values header)))]
+                                 (.setValueLocal (.getCustomElements row)
+                                                 header (get row-values header)))]
     (if (contains? list-feed :error)
       list-feed
       (do (dorun (map update-value-by-header headers))
@@ -290,17 +299,19 @@
    request of all cell updates to the drive api. Will return {:error :msg} if
    something goes wrong along the way"
   [google-ctx spreadsheet-id worksheet-id cells]
-  (let [sheet-service (build-sheet-service google-ctx)
+  (let [sheet-service ^SpreadsheetService (build-sheet-service google-ctx)
         spreadsheet (find-spreadsheet-by-id sheet-service spreadsheet-id)
+        spreadsheet-entry ^SpreadsheetEntry (:spreadsheet spreadsheet)
         worksheet (if (contains? spreadsheet :error)
                     spreadsheet
-                    (find-worksheet-by-id sheet-service (:spreadsheet spreadsheet) worksheet-id))
+                    (find-worksheet-by-id sheet-service spreadsheet-entry worksheet-id))
+        worksheet-entry ^WorksheetEntry (:worksheet worksheet)
         cell-feed-url (if (contains? worksheet :error)
                         worksheet
-                        {:cell-feed-url (.getCellFeedUrl (:worksheet worksheet))})]
+                        {:cell-feed-url (.getCellFeedUrl worksheet-entry)})]
     (if (contains? cell-feed-url :error)
       cell-feed-url
-      (let [cell-feed-url (:cell-feed-url cell-feed-url)
+      (let [cell-feed-url ^URL (:cell-feed-url cell-feed-url)
             batch-request (CellFeed.)
             create-update-entry (fn [[row col value]]
                                   (let [batch-id (str "R" row "C" col)
@@ -325,7 +336,7 @@
 (defn read-worksheet-headers
   "Given a Spreadsheet Service and a WorksheetEntry, return
    the value of all header cells(the first row in a worksheet)"
-  [sheet-service worksheet-entry]
+  [^SpreadsheetService sheet-service, ^WorksheetEntry worksheet-entry]
   (let [max-col (.getColCount worksheet-entry)
         cell-feed-url (.getCellFeedUrl worksheet-entry)
         cell-query (doto (CellQuery. cell-feed-url)
@@ -336,7 +347,7 @@
                      (.setMaximumCol max-col))
         cells (-> (.query sheet-service cell-query CellFeed)
                   .getEntries)
-        get-value (fn [cell]
+        get-value (fn [^CellEntry cell]
                     (let [value (.getValue (.getCell cell))]
                       (if (string? value) value "")))]
     (into [] (map get-value cells))))
@@ -346,13 +357,13 @@
   "Given a SpreadsheetService, and a WorksheetEntry, reads in that worksheet and returns
    the data from the cells as a list of vectors of strings '(['example']). Will return
    {:error :msg} if something goes wrong along the way such as a missing worksheet "
-  [sheet-service worksheet-entry]
+  [^SpreadsheetService sheet-service, ^WorksheetEntry worksheet-entry]
   (let [list-feed (.getFeed sheet-service (.getListFeedUrl worksheet-entry) ListFeed)
         entries (.getEntries list-feed)
-        get-value (fn [row tag]
+        get-value (fn [^CustomElementCollection row, tag]
                     (let [value (.getValue row tag)]
                       (if (string? value) value "")))
-        print-value (fn [entry]
+        print-value (fn [^ListEntry entry]
                       (let [row (.getCustomElements entry)]
                         (into [] (map #(get-value row %) (.getTags row)))))]
     (map print-value entries)))
@@ -397,8 +408,9 @@
             values (:values data-map)
             rows-needed (inc (count values))
             cols-needed (apply max (cons (count headers) (map count values)))
-            worksheet-name (.getPlainText (.getTitle (:worksheet worksheet)))
-            worksheet (update-worksheet-all-fields (:worksheet worksheet)
+            worksheet-entry ^WorksheetEntry (:worksheet worksheet)
+            worksheet-name (.getPlainText (.getTitle worksheet-entry))
+            worksheet (update-worksheet-all-fields worksheet-entry
                                                    rows-needed cols-needed worksheet-name)
             build-cell (fn [column value]
                          [(inc column) value])

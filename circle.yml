@@ -1,0 +1,13 @@
+machine:
+  timezone: America/New_York
+  java:
+    version: oraclejdk8
+
+dependencies:
+  override:
+    - lein deps
+
+#TODO: add unit tests where it makes sense
+test:
+  override:
+    - lein typed check

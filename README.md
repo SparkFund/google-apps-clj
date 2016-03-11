@@ -4,6 +4,12 @@ A Clojure library that wraps the Google Java API for different Google Applicatio
 
 This library is partially typed using `core.typed`.  Run `lein typed check` to type-check the library's code.
 
+Latest test results (Thanks, [CircleCI](https://github.com/CircleCI)!):
+
+* `develop`: [![Circle CI](https://circleci.com/gh/SparkFund/google-apps-clj/tree/develop.svg?style=svg)](https://circleci.com/gh/SparkFund/google-apps-clj/tree/develop)
+* `master`: [![Circle CI](https://circleci.com/gh/SparkFund/google-apps-clj/tree/master.svg?style=svg)](https://circleci.com/gh/SparkFund/google-apps-clj/tree/master)
+
+
 ## Installing
 
 If you're using Leiningen, just add this to your `project.clj`:

@@ -1,5 +1,29 @@
 # google-apps-clj changes
 
+0.5.0 (2016-03-11)
+------------------
+
+:warning: This release includes major breaking changes in the Google Drive code.
+
+**Breaking Changes**
+
+* Drive: *Major change*: Complete overhaul of `google-drive` namespace to simplify and organize the code, and to make
+the type checker pass.  Many type-defs and functions have been renamed, or simplified to take fewer unnamed arguments
+and instead take a map with additional options (for example, see `upload-file!`) which should make it easier to use.
+Two protocols used in converting Objects into usable data (`Requestable` and `Response`) have been replaced with
+simpler functions instead.
+* Drive: Map keys for literal `true` values will no longer automatically be appended with a `?`.  Before this change,
+we would convert `{"canInvite" true}` to `{:can-invite? true}`.  After this change, it will instead be transformed
+to `{:can-invite true}` (note the lack of a question mark).  Keys for other values will not be changed
+(e.g. `{"canInvite" false, "name" "test"}` still becomes `{:can-invite false, :name "test"}`
+
+**Features**
+
+* Type Checking: All namespaces now pass `core.typed` type checking via `lein typed check`.  Type checking helped
+uncover and fix multiple bugs in the existing code.
+* CI: Type checking will run automatically for commits in this repo; this should help keep type annotations from
+becoming so broken
+
 
 0.4.4 (2016-03-07)
 ------------------

@@ -1,5 +1,13 @@
 # google-apps-clj changes
 
+0.5.1 (2016-03-14)
+------------------
+
+**Bug Fixes**
+* [#18](https://github.com/SparkFund/google-apps-clj/issues/18): in Credentials: Tweak type definition for
+`GoogleCtx` property `:redirect-uris` from `t/ISeq` to the more general `t/Seqable`
+
+
 0.5.0 (2016-03-11)
 ------------------
 

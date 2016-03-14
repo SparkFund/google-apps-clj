@@ -21,7 +21,7 @@
 (t/defalias GoogleCtx
   (t/HMap :mandatory {:client-id t/Str
                       :client-secret t/Str
-                      :redirect-uris (t/Seq t/Str)
+                      :redirect-uris (t/Seqable t/Str)
                       :auth-map (t/HMap :mandatory {:access-token t/Str
                                                     :expires-in t/AnyInteger
                                                     :refresh-token t/Str

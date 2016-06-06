@@ -8,6 +8,7 @@
                  [com.google.apis/google-api-services-calendar "v3-rev128-1.20.0"]
                  [com.google.apis/google-api-services-drive "v2-rev168-1.20.0"]
                  [com.google.gdata/core "1.47.1" :exclusions [org.apache.httpcomponents/httpclient
+                                                              org.mortbay.jetty/jetty
                                                               com.google.code.findbugs/jsr305]]]
   :plugins [[lein-typed "0.3.5"]]
   :repl-options {:init-ns google-apps-clj.repl}

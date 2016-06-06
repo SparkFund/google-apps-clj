@@ -15,7 +15,7 @@ Latest test results (Thanks, [CircleCI](https://github.com/CircleCI)!):
 If you're using Leiningen, just add this to your `project.clj`:
 
 ```clj
-[google-apps-clj "0.5.1"]
+[google-apps-clj "0.5.2"]
 ```
 
 Check out [CHANGELOG.md](CHANGELOG.md) to see what's been updated lately.

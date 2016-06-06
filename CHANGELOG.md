@@ -1,5 +1,13 @@
 # google-apps-clj changes
 
+0.5.2 (2016-06-06)
+------------------
+
+**Bug Fixes**
+* [#19](https://github.com/SparkFund/google-apps-clj/issues/19): in `project.clj`: Add useless Jetty
+library to `:exclusions` to help prevent conflicts in downstream consumers
+
+
 0.5.1 (2016-03-14)
 ------------------
 

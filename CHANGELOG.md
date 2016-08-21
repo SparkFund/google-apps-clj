@@ -1,5 +1,12 @@
 # google-apps-clj changes
 
+0.5.3 (2016-08-14)
+------------------
+
+**Features**
+
+* Add support for Google Sheets v4 api
+
 0.5.2 (2016-06-06)
 ------------------
 

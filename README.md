@@ -15,7 +15,13 @@ Latest test results (Thanks, [CircleCI](https://github.com/CircleCI)!):
 If you're using Leiningen, just add this to your `project.clj`:
 
 ```clj
-[google-apps-clj "0.5.2"]
+[google-apps-clj "0.5.3"]
+```
+
+If you are using ClojureScript, there's a dependency conflict (see [#22](https://github.com/SparkFund/google-apps-clj/issues/22)) between Google Closure Compiler and the Google Apps API library , so you'll have to add an exclusion, like so:
+
+```clj
+[google-apps-clj "0.5.3" :exclusions [com.google.guava/guava-jdk5]]
 ```
 
 Check out [CHANGELOG.md](CHANGELOG.md) to see what's been updated lately.

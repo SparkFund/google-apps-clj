@@ -1,5 +1,6 @@
 (ns google-apps-clj.google-sheets-v4
-  (:require [clj-time.core :as time])
+  (:require [clj-time.core :as time]
+            [clojure.string :as string])
   (:import
    (com.google.api.client.auth.oauth2 Credential)
    (com.google.api.client.extensions.java6.auth.oauth2 AuthorizationCodeInstalledApp)
@@ -64,8 +65,34 @@
       (.get spreadsheet-id)
       (.execute)))
 
+(defn get-sheet-titles
+  [service spreadsheet-id]
+  "returns a list of [sheet-title sheet-id] tuples. It seems the order reflects
+  the order of the tabs in google's interface, though I doubt this is anywhere
+  guaranteed."
+  (->> (get (get-sheet-info service spreadsheet-id) "sheets")
+       (map #(get % "properties"))
+       (map (juxt #(get % "title") #(get % "sheetId")))))
+
+(defn date-time
+  "using the given excel date formatting string, eg \"yyyy-mm-dd\", \"M/d/yyyy\" "
+  [date-time format-patterm]
+  (-> (CellData.)
+      (.setUserEnteredValue
+       (-> (ExtendedValue.)
+           ;; Heaven help us. Excel serial time and casting to a float.
+           (.setNumberValue
+            (double (+ 2 (time/in-days (time/interval (time/date-time 1900 1 1)
+                                                      date-time)))))))
+      (.setUserEnteredFormat
+       (-> (CellFormat.)
+           (.setNumberFormat
+            (-> (NumberFormat.)
+                (.setType "DATE")
+                (.setPattern format-patterm)))))))
+
 (defn coerce-to-cell-data
-  "Numbers and strings and keywords auto-coerce to CellData"
+  "Numbers and strings and keywords and date-times auto-coerce to CellData"
   [val]
   (cond
     (number? val) (-> (CellData.)
@@ -81,10 +108,40 @@
                         (-> (ExtendedValue.)
                             (.setStringValue (str val)))))
     (instance? CellData val) val
+    (instance? org.joda.time.DateTime val) (date-time val "yyyy-mm-dd")
     :else (throw (ex-info
                   (str "Unknown cell type: " (type val))
                   {:val val
                    :type (type val)}))))
+
+(defn cell-data->clj
+  "Converts cell data with either a userEnteredValue (x)or effectiveValue to a clojure type.
+  stringValue -> string
+  numberValue -> double
+  DATE -> date-time
+  else ~ identity"
+  [cell-data]
+  (let [ev (get cell-data "effectiveValue")
+        uev (get cell-data "userEnteredValue")
+        _ (when (and (some? ev)
+                     (some? uev))
+            (throw (ex-info "Ambiguous cell data, contains both string effectiveValue and userEnteredValue"
+                            {:cell-data cell-data})))
+        string-val (get (or ev uev) "stringValue")
+        number-val (get (or ev uev) "numberValue")
+        _ (when (and (some? string-val)
+                     (some? number-val))
+            (throw (ex-info "Ambiguous cell data, contains both string effectiveValue and userEnteredValue"
+                            {:cell-data cell-data})))]
+    (cond
+      string-val
+      string-val
+      number-val
+      (let [date? (= "DATE" (get-in cell-data ["userEnteredFormat" "numberFormat" "type"]))]
+        (if date?
+          (time/plus (time/date-time 1900 1 1) (time/days (- (long number-val) 2)))
+          number-val))
+      :else cell-data)))
 
 (defn formula
   [str]
@@ -104,23 +161,6 @@
               (-> (NumberFormat.)
                   (.setType "CURRENCY"))))))))
 
-(defn date-time
-  "using the given excel date formatting string"
-  [date-time format-patterm]
-  (-> (CellData.)
-      (.setUserEnteredValue
-       (-> (ExtendedValue.)
-           ;; Heaven help us. Excel serial time and casting to a float.
-           (.setNumberValue
-            (double (+ 2 (time/in-days (time/interval (time/date-time 1900 1 1)
-                                                      date-time)))))))
-      (.setUserEnteredFormat
-       (-> (CellFormat.)
-           (.setNumberFormat
-            (-> (NumberFormat.)
-                (.setType "DATE")
-                (.setPattern format-patterm)))))))
-
 (defn row->row-data
   "google-ifies a row (list of columns) of type string?, number? keyword? or CellData."
   [row]
@@ -128,7 +168,9 @@
       (.setValues (map coerce-to-cell-data row))))
 
 (defn write-sheet
-  "writes values to a specific sheet (tab). Breaks down requests into batches of ~10k cells."
+  "writes values to a specific sheet (tab). Breaks down requests into batches of ~10k cells.
+  Overwrites all the existing rows on the sheet.  Doesn't alter the number of
+  columns on the sheet and so writing more columns than the sheet has will error"
   [service spreadsheet-id sheet-id rows]
   (assert (not-empty rows) "Must write at least one row to the sheet")
   (let [sheet-id (int sheet-id)
@@ -143,21 +185,6 @@
                                                                  (.setSheetId sheet-id)
                                                                  (.setStartIndex (int 1))
                                                                  (.setEndIndex (int 9999)))))))
-                     (-> (Request.)
-                         (.setDeleteDimension (-> (DeleteDimensionRequest.)
-                                                  (.setRange (-> (DimensionRange.)
-                                                                 (.setDimension "COLUMNS")
-                                                                 (.setSheetId sheet-id)
-                                                                 (.setStartIndex (int 1))
-                                                                 (.setEndIndex (int 9999)))))))
-                     (-> (Request.)
-                         (.setInsertDimension (-> (InsertDimensionRequest.)
-                                                  (.setInheritFromBefore true)
-                                                  (.setRange (-> (DimensionRange.)
-                                                                 (.setDimension "COLUMNS")
-                                                                 (.setSheetId sheet-id)
-                                                                 (.setStartIndex (int 1))
-                                                                 (.setEndIndex num-cols))))))
                      (-> (Request.)
                          (.setUpdateCells (-> (UpdateCellsRequest.)
                                               (.setStart (-> (GridCoordinate.)
@@ -190,6 +217,42 @@
                                                          (.setFields "userEnteredValue,userEnteredFormat"))))])))
                             (.execute)))
                       (rest rest-batches))))))
+
+(defn append-sheet
+  "appends rows to a specific sheet (tab). Appends starting at the last
+  non-blank row.  Breaks down requests into batches of ~10k cells.  Doesn't
+  alter the number of columns on the sheet and so writing more columns than the
+  sheet has will error"
+  [service spreadsheet-id sheet-id rows]
+  (assert (not-empty rows) "Must write at least one row to the sheet")
+  (let [sheet-id (int sheet-id)
+        num-cols (int (count (first rows)))
+        part-size (long (/ 10000 num-cols))
+        batches (partition part-size part-size [] rows)
+        first-batch [(-> (Request.)
+                         (.setAppendCells (-> (AppendCellsRequest.)
+                                              (.setSheetId sheet-id)
+                                              (.setRows (map row->row-data (first batches)))
+                                              (.setFields "userEnteredValue,userEnteredFormat"))))]]
+    (doall (cons (-> service
+                     (.spreadsheets)
+                     (.batchUpdate spreadsheet-id
+                                   (-> (BatchUpdateSpreadsheetRequest.) (.setRequests first-batch)))
+                     (.execute))
+                 (map (fn [batch]
+                        (-> service
+                            (.spreadsheets)
+                            (.batchUpdate
+                             spreadsheet-id
+                             (-> (BatchUpdateSpreadsheetRequest.)
+                                 (.setRequests [(-> (Request.)
+                                                    (.setAppendCells
+                                                     (-> (AppendCellsRequest.)
+                                                         (.setSheetId sheet-id)
+                                                         (.setRows (map row->row-data batch))
+                                                         (.setFields "userEnteredValue,userEnteredFormat"))))])))
+                            (.execute)))
+                      (rest batches))))))
 
 (defn add-sheet
   "returns the 'properties' field of the created sheet"
@@ -238,3 +301,44 @@
                    (add-sheet-id))]
     (write-sheet service worksheet-id sheet-id table)
     sheet-id))
+
+(defn get-effective-vals
+  "sheet-ranges is a list of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]
+  Returns a list of tables in corresponding to sheet-ranges.  Only one
+  sheet (tab) can be specified per batch, due to a quirk of Google's API as far
+  as we can tell."
+  [service worksheet-id sheet-ranges]
+  (let [sheet-titles (map #(-> % (string/split #"!") first) sheet-ranges)
+        _ (when (not= sheet-titles (distinct sheet-titles))
+            (throw (ex-info "Can't query the same sheet twice in the same batch" {:sheet-ranges sheet-ranges})))
+        data (-> service
+                 (.spreadsheets)
+                 (.get worksheet-id)
+                 (.setRanges sheet-ranges)
+                 (.setFields "sheets(properties(title),data(rowData(values(effectiveValue,userEnteredFormat))))")
+                 (.execute))
+        tables (-> data
+                   (get "sheets"))
+        title->table (->> tables
+                          (map (fn [table]
+                                 (let [rows (-> table (get "data") (first) (get "rowData"))
+                                       cljd-rows (->> rows
+                                                      (map (fn [row]
+                                                             (let [vals (-> row (get "values"))]
+                                                               (->> vals
+                                                                    (map (fn [val] (-> val
+                                                                                       (cell-data->clj)))))))))]
+                                   [(get-in table ["properties" "title"]) cljd-rows])))
+                          (into {}))]
+    (map title->table sheet-titles)))
+
+(defn rectangularize
+  "Google gives given a table (list-of-lists) makes sure all rows are the same
+  length by right-padding rows with at least one value, and drops empty rows."
+  [pad-val table]
+  (let [width (apply max (map count table))]))
+
+(defn transpose
+  "transposes a table (list-of-lists)"
+  [table]
+  (apply map vector table))

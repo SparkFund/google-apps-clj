@@ -15,14 +15,6 @@
     (try
       (let [service (build-service creds)]
         (testing "get-sheet-info"
-          (is (get-sheet-info service id)))
-        (testing "pretend api"
-          (prn (create-sheet! service id "sheet-title"))
-          #_(let [sheet-id ]
-            (write-cells! service id sheet-id [0 0]
-                          [["Name" "Birthday" "Age"]
-                           ["Amelia Earhart" #inst "1897-07-24" 39]])
-            (is (= [["Amelia Earhart" #inst "1897-07-24" 39]]
-                   (read-cells! service id sheet-id [1 0] [1 2]))))))
+          (is (get-sheet-info service id))))
       (finally
         (gdrive/delete-file! creds id)))))

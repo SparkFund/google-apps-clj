@@ -116,6 +116,7 @@
                        (.setUserEnteredValue
                         (-> (ExtendedValue.)
                             (.setStringValue (str val)))))
+    (nil? val) (CellData.)
     (instance? CellData val) val
     (instance? org.joda.time.DateTime val) (date-time val "yyyy-mm-dd")
     :else (throw (ex-info
@@ -150,6 +151,8 @@
         (if date?
           (time/plus (time/date-time 1900 1 1) (time/days (- (long number-val) 2)))
           number-val))
+      (and (nil? ev) (nil? uev))
+      nil
       :else cell-data)))
 
 (defn formula

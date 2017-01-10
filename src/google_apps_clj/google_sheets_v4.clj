@@ -313,8 +313,8 @@
 
 (defn find-sheet-by-title
   "returns the sheetId or nil"
-  [service worksheet-id sheet-title]
-  (let [info (get-spreadsheet-info service worksheet-id)
+  [service sheet-id sheet-title]
+  (let [info (get-spreadsheet-info service sheet-id)
         sheet-ids (->> (get-in info ["sheets"])
                        (filter #(= sheet-title (get-in % ["properties" "title"])))
                        (map #(get-in % ["properties" "sheetId"])))]
@@ -326,15 +326,15 @@
   "Adds a new sheet (tab) with the given table data,
   Will throw an exception if the sheet already exists, unless :force? is true
   Returns the sheet id."
-  [service worksheet-id sheet-title table & {:keys [force?]}]
-  (let [info (get-spreadsheet-info service worksheet-id)
-        add-sheet-id (fn [] (-> (add-sheet service worksheet-id sheet-title)
+  [service sheet-id sheet-title table & {:keys [force?]}]
+  (let [info (get-spreadsheet-info service sheet-id)
+        add-sheet-id (fn [] (-> (add-sheet service sheet-id sheet-title)
                                 (get "sheetId")))
         sheet-id (if force?
-                   (or (find-sheet-by-title service worksheet-id sheet-title)
+                   (or (find-sheet-by-title service sheet-id sheet-title)
                        (add-sheet-id))
                    (add-sheet-id))]
-    (write-sheet service worksheet-id sheet-id table)
+    (write-sheet service sheet-id sheet-id table)
     sheet-id))
 
 (defn get-effective-vals
@@ -342,13 +342,13 @@
   Returns a list of tables in corresponding to sheet-ranges.  Only one
   sheet (tab) can be specified per batch, due to a quirk of Google's API as far
   as we can tell."
-  [service worksheet-id sheet-ranges]
+  [service sheet-id sheet-ranges]
   (let [sheet-titles (map #(-> % (string/split #"!") first) sheet-ranges)
         _ (when (not= sheet-titles (distinct sheet-titles))
             (throw (ex-info "Can't query the same sheet twice in the same batch" {:sheet-ranges sheet-ranges})))
         data (-> service
                  (.spreadsheets)
-                 (.get worksheet-id)
+                 (.get sheet-id)
                  (.setRanges sheet-ranges)
                  (.setFields "sheets(properties(title),data(rowData(values(effectiveValue,userEnteredFormat))))")
                  (.execute))

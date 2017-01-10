@@ -343,14 +343,3 @@
                                    [(get-in table ["properties" "title"]) cljd-rows])))
                           (into {}))]
     (map title->table sheet-titles)))
-
-(defn rectangularize
-  "Google gives given a table (list-of-lists) makes sure all rows are the same
-  length by right-padding rows with at least one value, and drops empty rows."
-  [pad-val table]
-  (let [width (apply max (map count table))]))
-
-(defn transpose
-  "transposes a table (list-of-lists)"
-  [table]
-  (apply map vector table))

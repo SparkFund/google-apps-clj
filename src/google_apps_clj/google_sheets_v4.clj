@@ -65,7 +65,7 @@
                      (.build))]
      service)))
 
-(defn get-sheet-info
+(defn get-spreadsheet-info
   "Returns a \"sheets\" field which contains information about a spreadsheet's
   sheets (tabs). Includes \"sheetId\" which is needed for batch updates."
   [service spreadsheet-id]
@@ -79,7 +79,7 @@
   "returns a list of [sheet-title sheet-id] tuples. It seems the order reflects
   the order of the tabs in google's interface, though I doubt this is anywhere
   guaranteed."
-  (->> (get (get-sheet-info service spreadsheet-id) "sheets")
+  (->> (get (get-spreadsheet-info service spreadsheet-id) "sheets")
        (map #(get % "properties"))
        (map (juxt #(get % "title") #(get % "sheetId")))))
 
@@ -313,7 +313,7 @@
 (defn find-sheet-by-title
   "returns the sheetId or nil"
   [service worksheet-id sheet-title]
-  (let [info (get-sheet-info service worksheet-id)
+  (let [info (get-spreadsheet-info service worksheet-id)
         sheet-ids (->> (get-in info ["sheets"])
                        (filter #(= sheet-title (get-in % ["properties" "title"])))
                        (map #(get-in % ["properties" "sheetId"])))]
@@ -326,7 +326,7 @@
   Will throw an exception if the sheet already exists, unless :force? is true
   Returns the sheet id."
   [service worksheet-id sheet-title table & {:keys [force?]}]
-  (let [info (get-sheet-info service worksheet-id)
+  (let [info (get-spreadsheet-info service worksheet-id)
         add-sheet-id (fn [] (-> (add-sheet service worksheet-id sheet-title)
                                 (get "sheetId")))
         sheet-id (if force?

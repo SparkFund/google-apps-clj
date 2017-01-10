@@ -328,7 +328,7 @@
   (or (find-sheet-id service spreadsheet-id sheet-title)
       (get (add-sheet service spreadsheet-id sheet-title) "sheetId")))
 
-(defn get-effective-vals
+(defn get-cell-data
   "sheet-ranges is a seq of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]
    Returns a vector of tables in corresponding to sheet-ranges.  Only one
    sheet (tab) can be specified per batch, due to a quirk of Google's API as far
@@ -336,24 +336,32 @@
   [^Sheets service spreadsheet-id sheet-ranges]
   (let [sheet-titles (map #(-> % (string/split #"!") first) sheet-ranges)
         _ (when (not= sheet-titles (distinct sheet-titles))
-            (throw (ex-info "Can't query the same sheet twice in the same batch" {:sheet-ranges sheet-ranges})))
+            (throw (ex-info "Can't query the same sheet twice in the same batch"
+                            {:sheet-ranges sheet-ranges})))
+        fields "sheets(properties(title),data(rowData(values(effectiveValue,userEnteredFormat))))"
         data (-> service
                  (.spreadsheets)
                  (.get spreadsheet-id)
                  (.setRanges sheet-ranges)
-                 (.setFields "sheets(properties(title),data(rowData(values(effectiveValue,userEnteredFormat))))")
+                 (.setFields fields)
                  (.execute))
-        tables (-> data
-                   (get "sheets"))
+        tables (get data "sheets")
         title->table (->> tables
                           (map (fn [table]
-                                 (let [rows (-> table (get "data") (first) (get "rowData"))
-                                       cljd-rows (->> rows
-                                                      (mapv (fn [row]
-                                                              (let [vals (-> row (get "values"))]
-                                                                (->> vals
-                                                                     (mapv (fn [val] (-> val
-                                                                                         (cell-data->clj)))))))))]
-                                   [(get-in table ["properties" "title"]) cljd-rows])))
+                                 (let [title (get-in table ["properties" "title"])
+                                       rows (mapv #(get % "values")
+                                                  (-> (get table "data")
+                                                      first
+                                                      (get "rowData")))]
+                                   [title rows])))
                           (into {}))]
     (mapv title->table sheet-titles)))
+
+(defn get-effective-vals
+  "sheet-ranges is a seq of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]
+   Returns a vector of tables in corresponding to sheet-ranges.  Only one
+   sheet (tab) can be specified per batch, due to a quirk of Google's API as far
+   as we can tell."
+  [^Sheets service spreadsheet-id sheet-ranges]
+  (let [tables (get-cell-data service spreadsheet-id sheet-ranges)]
+    (mapv (partial mapv (partial mapv cell-data->clj)) tables)))

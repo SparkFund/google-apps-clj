@@ -64,6 +64,11 @@
                 response (append-sheet service @spreadsheet-id @sheet-id rows)]
             (is (= 1 (count response)))
             (is (= @spreadsheet-id (get (first response) "spreadsheetId")))))
+        (testing "get-cell-data"
+          (let [cells (get-cell-data service @spreadsheet-id ["new tab!A1:Z3"])]
+            (is (= 1 (count cells)))
+            (is (= 3 (count (first cells))))
+            (is (apply = 26 (map count (first cells))))))
         (testing "get-effective-vals"
           (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:Z3"])]
             (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))

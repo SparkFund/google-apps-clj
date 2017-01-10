@@ -317,8 +317,10 @@
         (first)
         (get-in ["addSheet" "properties"]))))
 
-(defn find-sheet-by-title
-  "returns the sheetId or nil"
+(defn find-sheet-id
+  "Returns the id of the sheet with the given title in the given spreadsheet
+   id, if any. If there are more than one sheets with the given title, this
+   raises an exception."
   [service spreadsheet-id sheet-title]
   (let [info (get-spreadsheet-info service spreadsheet-id)
         sheet-ids (->> (get-in info ["sheets"])
@@ -328,20 +330,12 @@
       1 (first sheet-ids)
       0 nil)))
 
-(defn add-sheet-with-data
-  "Adds a new sheet (tab) with the given table data,
-   Will throw an exception if the sheet already exists, unless :force? is true
-   Returns the sheet id."
-  [service spreadsheet-id sheet-title table & {:keys [force?]}]
-  (let [info (get-spreadsheet-info service spreadsheet-id)
-        add-sheet-id (fn [] (-> (add-sheet service spreadsheet-id sheet-title)
-                                (get "sheetId")))
-        sheet-id (if force?
-                   (or (find-sheet-by-title service spreadsheet-id sheet-title)
-                       (add-sheet-id))
-                   (add-sheet-id))]
-    (write-sheet service spreadsheet-id sheet-id table)
-    spreadsheet-id))
+(defn obtain-sheet-id
+  "Returns the id of a sheet with the given title in the given spreadsheet id.
+   If one already exists, this returns it, otherwise creates a new one."
+  [service spreadsheet-id sheet-title]
+  (or (find-sheet-id service spreadsheet-id sheet-title)
+      (get (add-sheet service spreadsheet-id sheet-title) "sheetId")))
 
 (defn get-effective-vals
   "sheet-ranges is a seq of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]

@@ -42,11 +42,17 @@
             (is (= "new tab" title))
             (is sheetId)
             (vreset! sheet-id sheetId)))
-        (testing "find-sheet-by-title"
+        (testing "find-sheet-id"
           (is (= @sheet-id
-                 (find-sheet-by-title service @spreadsheet-id "new tab")))
+                 (find-sheet-id service @spreadsheet-id "new tab")))
           (is (= nil
-                 (find-sheet-by-title service @spreadsheet-id "no such tab"))))
+                 (find-sheet-id service @spreadsheet-id "no such tab"))))
+        (testing "obtain-sheet-id"
+          (is (= @sheet-id (obtain-sheet-id service @spreadsheet-id "new tab")))
+          (let [new-sheet-id (obtain-sheet-id service @spreadsheet-id "another tab")]
+            (is new-sheet-id)
+            (is (not= @sheet-id new-sheet-id))
+            (is (= new-sheet-id (find-sheet-id service @spreadsheet-id "another tab")))))
         (testing "write-sheet"
           (let [rows [(mapv (comp str char) (range (int \A) (inc (int \Z))))
                       (into [] (repeat 26 0))]
@@ -66,18 +72,6 @@
                    data)))
           (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:A5"])]
             (is (= [[["A"] [0.0] ["test"]]]
-                   data))))
-        (testing "add-sheet-with-data"
-          (let [rows [["Date"] [44]]
-                response (add-sheet-with-data service @spreadsheet-id
-                                              "another tab" rows)]
-            (is (= @spreadsheet-id response))
-            (is (find-sheet-by-title service @spreadsheet-id "another tab"))
-            (testing "throws when sheet title exists"
-              (is (thrown? Exception (add-sheet-with-data service @spreadsheet-id
-                                                          "another tab" rows))))
-            (testing "allows explicit overwriting sheet title"
-              (is (add-sheet-with-data service @spreadsheet-id
-                                       "another tab" rows :force? true))))))
+                   data)))))
       (finally
         (gdrive/delete-file! creds id)))))

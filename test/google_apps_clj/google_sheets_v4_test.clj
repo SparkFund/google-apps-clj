@@ -28,10 +28,55 @@
         filename (name (gensym "google-sheets-v4-test"))
         file (gdrive/upload-file! creds "root" nil filename
                                   {:mime-type mime-types/spreadsheet})
-        {:keys [id]} file]
+        {:keys [id]} file
+        spreadsheet-id (volatile! id)
+        sheet-id (volatile! nil)]
     (try
       (let [service (build-service creds)]
         (testing "get-sheet-info"
-          (is (get-sheet-info service id))))
+          (is (get-sheet-info service @spreadsheet-id)))
+        (testing "add-sheet"
+          (let [sheet (add-sheet service id "new tab")
+                {:strs [sheetId title]} sheet]
+            (is (= "new tab" title))
+            (is sheetId)
+            (vreset! sheet-id sheetId)))
+        (testing "find-sheet-by-title"
+          (is (= @sheet-id
+                 (find-sheet-by-title service @spreadsheet-id "new tab")))
+          (is (= nil
+                 (find-sheet-by-title service @spreadsheet-id "no such tab"))))
+        (testing "write-sheet"
+          (let [rows [(mapv (comp str char) (range (int \A) (inc (int \Z))))
+                      (into [] (repeat 26 0))]
+                response (write-sheet service @spreadsheet-id @sheet-id rows)]
+            (is (= 1 (count response)))
+            (is (= @spreadsheet-id (get (first response) "spreadsheetId")))))
+        (testing "append-sheet"
+          (let [rows [(into [] (repeat 26 "test"))]
+                response (append-sheet service @spreadsheet-id @sheet-id rows)]
+            (is (= 1 (count response)))
+            (is (= @spreadsheet-id (get (first response) "spreadsheetId")))))
+        (testing "get-effective-vals"
+          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:Z3"])]
+            (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
+                     (into [] (repeat 26 0.0))
+                     (into [] (repeat 26 "test"))]]
+                   data)))
+          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:A5"])]
+            (is (= [[["A"] [0.0] ["test"]]]
+                   data))))
+        (testing "add-sheet-with-data"
+          (let [rows [["Date"] [44]]
+                response (add-sheet-with-data service @spreadsheet-id
+                                              "another tab" rows)]
+            (is (= @spreadsheet-id response))
+            (is (find-sheet-by-title service @spreadsheet-id "another tab"))
+            (testing "throws when sheet title exists"
+              (is (thrown? Exception (add-sheet-with-data service @spreadsheet-id
+                                                          "another tab" rows))))
+            (testing "allows explicit overwriting sheet title"
+              (is (add-sheet-with-data service @spreadsheet-id
+                                       "another tab" rows :force? true))))))
       (finally
         (gdrive/delete-file! creds id)))))

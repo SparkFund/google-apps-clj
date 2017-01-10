@@ -68,7 +68,7 @@
 (defn get-spreadsheet-info
   "Returns a \"sheets\" field which contains information about a spreadsheet's
   sheets (tabs). Includes \"sheetId\" which is needed for batch updates."
-  [service spreadsheet-id]
+  [^Sheets service spreadsheet-id]
   (-> service
       (.spreadsheets)
       (.get spreadsheet-id)
@@ -113,7 +113,7 @@
   (= (bigdec n) (bigdec (double n))))
 
 (defprotocol CellDataValue
-  (->cell-data [_]))
+  (->cell-data ^CellData [_]))
 
 (extend-protocol CellDataValue
   Number
@@ -212,7 +212,7 @@
   "writes values to a specific sheet (tab). Breaks down requests into batches of ~10k cells.
   Overwrites all the existing rows on the sheet.  Doesn't alter the number of
   columns on the sheet and so writing more columns than the sheet has will error"
-  [service spreadsheet-id sheet-id rows]
+  [^Sheets service spreadsheet-id sheet-id rows]
   (assert (not-empty rows) "Must write at least one row to the sheet")
   (let [sheet-id (int sheet-id)
         num-cols (int (count (first rows)))
@@ -264,7 +264,7 @@
   non-blank row.  Breaks down requests into batches of ~10k cells.  Doesn't
   alter the number of columns on the sheet and so writing more columns than the
   sheet has will error"
-  [service spreadsheet-id sheet-id rows]
+  [^Sheets service spreadsheet-id sheet-id rows]
   (assert (not-empty rows) "Must write at least one row to the sheet")
   (let [sheet-id (int sheet-id)
         num-cols (int (count (first rows)))
@@ -297,7 +297,7 @@
 
 (defn add-sheet
   "returns the 'properties' field of the created sheet"
-  [service spreadsheet-id sheet-title]
+  [^Sheets service spreadsheet-id sheet-title]
   (let [response (-> service
                      (.spreadsheets)
                      (.batchUpdate
@@ -342,7 +342,7 @@
    Returns a vector of tables in corresponding to sheet-ranges.  Only one
    sheet (tab) can be specified per batch, due to a quirk of Google's API as far
    as we can tell."
-  [service spreadsheet-id sheet-ranges]
+  [^Sheets service spreadsheet-id sheet-ranges]
   (let [sheet-titles (map #(-> % (string/split #"!") first) sheet-ranges)
         _ (when (not= sheet-titles (distinct sheet-titles))
             (throw (ex-info "Can't query the same sheet twice in the same batch" {:sheet-ranges sheet-ranges})))

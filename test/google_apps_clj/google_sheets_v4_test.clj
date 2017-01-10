@@ -34,8 +34,8 @@
         sheet-id (volatile! nil)]
     (try
       (let [service (build-service creds)]
-        (testing "get-sheet-info"
-          (is (get-sheet-info service @spreadsheet-id)))
+        (testing "get-spreadsheet-info"
+          (is (get-spreadsheet-info service @spreadsheet-id)))
         (testing "add-sheet"
           (let [sheet (add-sheet service id "new tab")
                 {:strs [sheetId title]} sheet]

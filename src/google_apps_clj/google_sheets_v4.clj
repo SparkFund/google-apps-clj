@@ -10,14 +10,10 @@
                                                  GoogleAuthorizationCodeFlow$Builder
                                                  GoogleClientSecrets)
    (com.google.api.client.googleapis.javanet GoogleNetHttpTransport)
-   (com.google.api.client.http HttpTransport)
    (com.google.api.client.json.jackson2 JacksonFactory)
-   (com.google.api.client.json JsonFactory)
-   (com.google.api.client.util.store FileDataStoreFactory)
    (com.google.api.services.sheets.v4 SheetsScopes
                                       Sheets
-                                      Sheets$Builder
-                                      SheetsRequestInitializer)
+                                      Sheets$Builder)
    (com.google.api.services.sheets.v4.model AddSheetRequest
                                             AppendCellsRequest
                                             BatchUpdateSpreadsheetRequest
@@ -32,12 +28,7 @@
                                             Request
                                             RowData
                                             SheetProperties
-                                            UpdateCellsRequest)
-   (java.io IOException
-            InputStream
-            InputStreamReader)
-   (java.util Arrays
-              List)))
+                                            UpdateCellsRequest)))
 
 (def scopes
   [SheetsScopes/SPREADSHEETS])

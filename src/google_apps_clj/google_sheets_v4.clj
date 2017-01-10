@@ -81,7 +81,7 @@
   guaranteed."
   (->> (get (get-spreadsheet-info service spreadsheet-id) "sheets")
        (map #(get % "properties"))
-       (map (juxt #(get % "title") #(get % "sheetId")))))
+       (mapv (juxt #(get % "title") #(get % "sheetId")))))
 
 (defn date-time
   "using the given excel date formatting string, eg \"yyyy-mm-dd\", \"M/d/yyyy\" "

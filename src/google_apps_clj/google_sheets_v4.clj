@@ -100,12 +100,18 @@
                 (.setType "DATE")
                 (.setPattern format-patterm)))))))
 
+(defn safe-to-double?
+  [n]
+  (= (bigdec n) (bigdec (double n))))
+
 (defprotocol CellDataValue
   (->cell-data [_]))
 
 (extend-protocol CellDataValue
   Number
   (->cell-data [n]
+    (when-not (safe-to-double? n)
+      (throw (ex-info "Number value exceeds double precision" {:n n})))
     (-> (CellData.)
         (.setUserEnteredValue
          (-> (ExtendedValue.)

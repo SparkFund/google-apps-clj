@@ -89,10 +89,10 @@
   (-> (CellData.)
       (.setUserEnteredValue
        (-> (ExtendedValue.)
-           ;; Heaven help us. Excel serial time and casting to a float.
+           ;; https://developers.google.com/sheets/api/guides/concepts#datetime_serial_numbers
            (.setNumberValue
-            (double (+ 2 (time/in-days (time/interval (time/date-time 1900 1 1)
-                                                      date-time)))))))
+            (double (time/in-days (time/interval (time/date-time 1899 12 30)
+                                                 date-time))))))
       (.setUserEnteredFormat
        (-> (CellFormat.)
            (.setNumberFormat
@@ -163,7 +163,8 @@
       string-val
 
       date?
-      (time/plus (time/date-time 1900 1 1) (time/days (- (long number-val) 2)))
+      ;; https://developers.google.com/sheets/api/guides/concepts#datetime_serial_numbers
+      (time/plus (time/date-time 1899 12 30) (time/days (long number-val)))
 
       currency?
       (bigdec number-val)

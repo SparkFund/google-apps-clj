@@ -83,22 +83,30 @@
        (map #(get % "properties"))
        (mapv (juxt #(get % "title") #(get % "sheetId")))))
 
-(defn date-time
-  "using the given excel date formatting string, eg \"yyyy-mm-dd\", \"M/d/yyyy\" "
-  [date-time format-patterm]
+(defn date-cell-data
+  "Returns a CellData containing the given date, formatted using the given excel
+   date formatting string, e.g. \"yyyy-mm-dd\" or \"M/d/yyyy\""
+  [pattern dt]
   (-> (CellData.)
       (.setUserEnteredValue
        (-> (ExtendedValue.)
            ;; https://developers.google.com/sheets/api/guides/concepts#datetime_serial_numbers
            (.setNumberValue
-            (double (time/in-days (time/interval (time/date-time 1899 12 30)
-                                                 date-time))))))
+            (double (time/in-days (time/interval (time/date-time 1899 12 30) dt))))))
       (.setUserEnteredFormat
        (-> (CellFormat.)
            (.setNumberFormat
             (-> (NumberFormat.)
                 (.setType "DATE")
-                (.setPattern format-patterm)))))))
+                (.setPattern pattern)))))))
+
+(defn formula-cell-data
+  "Returns a CellData containing the given formula"
+  [str]
+  (-> (CellData.)
+      (.setUserEnteredValue
+       (-> (ExtendedValue.)
+           (.setFormulaValue str)))))
 
 (defn safe-to-double?
   [n]
@@ -130,7 +138,7 @@
     cd)
   org.joda.time.DateTime
   (->cell-data [dt]
-    (date-time dt "yyyy-mm-dd"))
+    (date-cell-data "yyyy-mm-dd" dt))
   nil
   (->cell-data [_]
     (CellData.)))
@@ -139,6 +147,16 @@
   "Numbers and strings and keywords and date-times auto-coerce to CellData"
   [x]
   (->cell-data x))
+
+(defn currency-cell-data
+  "Returns a CellData containing the given value formatted as currency"
+  [v]
+  (-> (->cell-data v)
+      (.setUserEnteredFormat
+       (-> (CellFormat.)
+           (.setNumberFormat
+            (-> (NumberFormat.)
+                (.setType "CURRENCY")))))))
 
 (defn cell-data->clj
   "Converts cell data with either a userEnteredValue (x)or effectiveValue to a clojure type.
@@ -183,24 +201,6 @@
 
       :else
       cell-data)))
-
-(defn formula
-  [str]
-  (-> (CellData.)
-      (.setUserEnteredValue
-       (-> (ExtendedValue.)
-           (.setFormulaValue str)))))
-
-(defn with-money-format
-  "Adds money formatting to CellData (or other val corecible by coerce-to-cell-data)"
-  [coercible-val]
-  (let [cell-data (coerce-to-cell-data coercible-val)]
-    (-> cell-data
-        (.setUserEnteredFormat
-         (-> (CellFormat.)
-             (.setNumberFormat
-              (-> (NumberFormat.)
-                  (.setType "CURRENCY"))))))))
 
 (defn row->row-data
   "google-ifies a row (list of columns) of type string?, number? keyword? or CellData."

@@ -18,8 +18,8 @@
   (is (= nil (cell-data->clj (coerce-to-cell-data nil))))
   (is (= (time/date-time 1950 6 15)
          (cell-data->clj (coerce-to-cell-data (time/date-time 1950 6 15)))))
-  (is (= 2.01M (cell-data->clj (with-money-format 2.01M))))
-  (is (instance? CellData (cell-data->clj (formula "A1+B2"))))
+  (is (= 2.01M (cell-data->clj (currency-cell-data 2.01M))))
+  (is (instance? CellData (cell-data->clj (formula-cell-data "A1+B2"))))
   (is (instance? RowData (row->row-data ["foo" nil 2.0])))
   (is (thrown? Exception (coerce-to-cell-data 299792.457999999984M))))
 

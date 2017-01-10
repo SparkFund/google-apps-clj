@@ -313,8 +313,8 @@
 
 (defn find-sheet-by-title
   "returns the sheetId or nil"
-  [service sheet-id sheet-title]
-  (let [info (get-spreadsheet-info service sheet-id)
+  [service spreadsheet-id sheet-title]
+  (let [info (get-spreadsheet-info service spreadsheet-id)
         sheet-ids (->> (get-in info ["sheets"])
                        (filter #(= sheet-title (get-in % ["properties" "title"])))
                        (map #(get-in % ["properties" "sheetId"])))]
@@ -324,31 +324,31 @@
 
 (defn add-sheet-with-data
   "Adds a new sheet (tab) with the given table data,
-  Will throw an exception if the sheet already exists, unless :force? is true
-  Returns the sheet id."
-  [service sheet-id sheet-title table & {:keys [force?]}]
-  (let [info (get-spreadsheet-info service sheet-id)
-        add-sheet-id (fn [] (-> (add-sheet service sheet-id sheet-title)
+   Will throw an exception if the sheet already exists, unless :force? is true
+   Returns the sheet id."
+  [service spreadsheet-id sheet-title table & {:keys [force?]}]
+  (let [info (get-spreadsheet-info service spreadsheet-id)
+        add-sheet-id (fn [] (-> (add-sheet service spreadsheet-id sheet-title)
                                 (get "sheetId")))
         sheet-id (if force?
-                   (or (find-sheet-by-title service sheet-id sheet-title)
+                   (or (find-sheet-by-title service spreadsheet-id sheet-title)
                        (add-sheet-id))
                    (add-sheet-id))]
-    (write-sheet service sheet-id sheet-id table)
-    sheet-id))
+    (write-sheet service spreadsheet-id sheet-id table)
+    spreadsheet-id))
 
 (defn get-effective-vals
-  "sheet-ranges is a list of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]
-  Returns a list of tables in corresponding to sheet-ranges.  Only one
-  sheet (tab) can be specified per batch, due to a quirk of Google's API as far
-  as we can tell."
-  [service sheet-id sheet-ranges]
+  "sheet-ranges is a seq of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]
+   Returns a vector of tables in corresponding to sheet-ranges.  Only one
+   sheet (tab) can be specified per batch, due to a quirk of Google's API as far
+   as we can tell."
+  [service spreadsheet-id sheet-ranges]
   (let [sheet-titles (map #(-> % (string/split #"!") first) sheet-ranges)
         _ (when (not= sheet-titles (distinct sheet-titles))
             (throw (ex-info "Can't query the same sheet twice in the same batch" {:sheet-ranges sheet-ranges})))
         data (-> service
                  (.spreadsheets)
-                 (.get sheet-id)
+                 (.get spreadsheet-id)
                  (.setRanges sheet-ranges)
                  (.setFields "sheets(properties(title),data(rowData(values(effectiveValue,userEnteredFormat))))")
                  (.execute))
@@ -358,11 +358,11 @@
                           (map (fn [table]
                                  (let [rows (-> table (get "data") (first) (get "rowData"))
                                        cljd-rows (->> rows
-                                                      (map (fn [row]
-                                                             (let [vals (-> row (get "values"))]
-                                                               (->> vals
-                                                                    (map (fn [val] (-> val
-                                                                                       (cell-data->clj)))))))))]
+                                                      (mapv (fn [row]
+                                                              (let [vals (-> row (get "values"))]
+                                                                (->> vals
+                                                                     (mapv (fn [val] (-> val
+                                                                                         (cell-data->clj)))))))))]
                                    [(get-in table ["properties" "title"]) cljd-rows])))
                           (into {}))]
-    (map title->table sheet-titles)))
+    (mapv title->table sheet-titles)))

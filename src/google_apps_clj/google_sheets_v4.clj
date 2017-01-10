@@ -100,29 +100,39 @@
                 (.setType "DATE")
                 (.setPattern format-patterm)))))))
 
+(defprotocol CellDataValue
+  (->cell-data [_]))
+
+(extend-protocol CellDataValue
+  Number
+  (->cell-data [n]
+    (-> (CellData.)
+        (.setUserEnteredValue
+         (-> (ExtendedValue.)
+             (.setNumberValue (double n))))))
+  String
+  (->cell-data [s]
+    (-> (CellData.)
+        (.setUserEnteredValue
+         (-> (ExtendedValue.)
+             (.setStringValue s)))))
+  clojure.lang.Keyword
+  (->cell-data [kw]
+    (->cell-data (str kw)))
+  CellData
+  (->cell-data [cd]
+    cd)
+  org.joda.time.DateTime
+  (->cell-data [dt]
+    (date-time dt "yyyy-mm-dd"))
+  nil
+  (->cell-data [_]
+    (CellData.)))
+
 (defn coerce-to-cell-data
   "Numbers and strings and keywords and date-times auto-coerce to CellData"
-  [val]
-  (cond
-    (number? val) (-> (CellData.)
-                      (.setUserEnteredValue
-                       (-> (ExtendedValue.)
-                           (.setNumberValue (double val)))))
-    (string? val) (-> (CellData.)
-                      (.setUserEnteredValue
-                       (-> (ExtendedValue.)
-                           (.setStringValue val))))
-    (keyword? val) (-> (CellData.)
-                       (.setUserEnteredValue
-                        (-> (ExtendedValue.)
-                            (.setStringValue (str val)))))
-    (nil? val) (CellData.)
-    (instance? CellData val) val
-    (instance? org.joda.time.DateTime val) (date-time val "yyyy-mm-dd")
-    :else (throw (ex-info
-                  (str "Unknown cell type: " (type val))
-                  {:val val
-                   :type (type val)}))))
+  [x]
+  (->cell-data x))
 
 (defn cell-data->clj
   "Converts cell data with either a userEnteredValue (x)or effectiveValue to a clojure type.

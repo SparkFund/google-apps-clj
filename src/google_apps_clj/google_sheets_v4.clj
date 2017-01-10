@@ -143,27 +143,39 @@
   [cell-data]
   (let [ev (get cell-data "effectiveValue")
         uev (get cell-data "userEnteredValue")
-        _ (when (and (some? ev)
-                     (some? uev))
-            (throw (ex-info "Ambiguous cell data, contains both string effectiveValue and userEnteredValue"
-                            {:cell-data cell-data})))
-        string-val (get (or ev uev) "stringValue")
-        number-val (get (or ev uev) "numberValue")
-        _ (when (and (some? string-val)
-                     (some? number-val))
-            (throw (ex-info "Ambiguous cell data, contains both string effectiveValue and userEnteredValue"
-                            {:cell-data cell-data})))]
+        v (or ev uev)
+        string-val (get v "stringValue")
+        number-val (get v "numberValue")
+        number-format (get-in cell-data ["userEnteredFormat" "numberFormat" "type"])
+        date? (= "DATE" number-format)
+        currency? (= "CURRENCY" number-format)
+        empty-cell? (and (nil? ev) (nil? uev) (instance? CellData cell-data))]
+    (when (and (some? ev)
+               (some? uev))
+      (throw (ex-info "Ambiguous cell data, contains both string effectiveValue and userEnteredValue"
+                      {:cell-data cell-data})))
+    (when (and (some? string-val)
+               (some? number-val))
+      (throw (ex-info "Ambiguous cell data value, contains both stringValue and numberValue"
+                      {:cell-data cell-data})))
     (cond
       string-val
       string-val
+
+      date?
+      (time/plus (time/date-time 1900 1 1) (time/days (- (long number-val) 2)))
+
+      currency?
+      (bigdec number-val)
+
       number-val
-      (let [date? (= "DATE" (get-in cell-data ["userEnteredFormat" "numberFormat" "type"]))]
-        (if date?
-          (time/plus (time/date-time 1900 1 1) (time/days (- (long number-val) 2)))
-          number-val))
-      (and (nil? ev) (nil? uev) (instance? CellData cell-data))
+      number-val
+
+      empty-cell?
       nil
-      :else cell-data)))
+
+      :else
+      cell-data)))
 
 (defn formula
   [str]

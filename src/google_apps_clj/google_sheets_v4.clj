@@ -151,7 +151,7 @@
         (if date?
           (time/plus (time/date-time 1900 1 1) (time/days (- (long number-val) 2)))
           number-val))
-      (and (nil? ev) (nil? uev))
+      (and (nil? ev) (nil? uev) (instance? CellData cell-data))
       nil
       :else cell-data)))
 

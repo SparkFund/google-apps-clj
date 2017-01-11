@@ -70,22 +70,37 @@
             (is (= 3 (count (first cells))))
             (is (apply = 26 (map count (first cells))))))
         (testing "get-effective-vals"
-          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:Z3"])]
-            (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
-                     (into [] (repeat 26 0.0))
-                     (into [] (repeat 26 "test"))]]
-                   data)))
-          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:A5"])]
-            (is (= [[["A"] [0.0] ["test"]]]
-                   data)))
-          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A:A"])]
-            (is (= [[["A"] [0.0] ["test"]]] data)))
-          (let [data (get-effective-vals service @spreadsheet-id ["new tab!1:1"])]
-            (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))]]
-                   data)))
-          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A2:A"])]
-            (is (= [[[0.0] ["test"]]] data)))
-          (let [data (get-effective-vals service @spreadsheet-id ["new tab!B2:2"])]
-            (is (= [[(into [] (repeat 25 0.0))]] data)))))
+          (testing "entire range, specified"
+            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:Z3"])]
+              (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
+                       (into [] (repeat 26 0.0))
+                       (into [] (repeat 26 "test"))]]
+                     data))))
+          (testing "subrange, specified"
+            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:A5"])]
+              (is (= [[["A"] [0.0] ["test"]]]
+                     data))))
+          (testing "column range"
+            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A:A"])]
+              (is (= [[["A"] [0.0] ["test"]]] data))))
+          (testing "row range"
+            (let [data (get-effective-vals service @spreadsheet-id ["new tab!1:1"])]
+              (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))]]
+                     data))))
+          (testing "partial column range"
+            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A2:A"])]
+              (is (= [[[0.0] ["test"]]] data))))
+          (testing "partial row range"
+            (let [data (get-effective-vals service @spreadsheet-id ["new tab!B2:2"])]
+              (is (= [[(into [] (repeat 25 0.0))]] data))))
+          (testing "entire range"
+            (let [data (get-effective-vals service @spreadsheet-id ["new tab"])]
+              (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
+                       (into [] (repeat 26 0.0))
+                       (into [] (repeat 26 "test"))]]
+                     data))))
+          (testing "specific range from the (implicit) first sheet"
+            (let [data (get-effective-vals service @spreadsheet-id ["A1:A2"])]
+              (is (= [[]] data))))))
       (finally
         (gdrive/delete-file! creds id)))))

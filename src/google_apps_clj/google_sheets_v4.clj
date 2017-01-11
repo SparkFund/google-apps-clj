@@ -23,12 +23,14 @@
                                             DimensionRange
                                             ExtendedValue
                                             GridCoordinate
+                                            GridProperties
                                             InsertDimensionRequest
                                             NumberFormat
                                             Request
                                             RowData
                                             SheetProperties
-                                            UpdateCellsRequest)))
+                                            UpdateCellsRequest
+                                            UpdateSheetPropertiesRequest)))
 
 (def scopes
   [SheetsScopes/SPREADSHEETS])
@@ -200,23 +202,38 @@
       (.setValues (map coerce-to-cell row))))
 
 (defn write-sheet
-  "writes values to a specific sheet (tab). Breaks down requests into batches of ~10k cells.
-  Overwrites all the existing rows on the sheet.  Doesn't alter the number of
-  columns on the sheet and so writing more columns than the sheet has will error"
+  "Overwrites the given sheet with the given rows of data. The data on the given
+   sheet will be deleted and it will be resized to fit the given data exactly.
+
+   This will be batched into requests of approximately 10k cell values. Larger
+   requests yielded errors, though there is apparently no explicit limit or
+   guidance given."
   [^Sheets service spreadsheet-id sheet-id rows]
   (assert (not-empty rows) "Must write at least one row to the sheet")
   (let [sheet-id (int sheet-id)
-        num-cols (int (count (first rows)))
+        num-cols (int (apply max (map count rows)))
         first-row (first rows)
         part-size (long (/ 10000 num-cols))
-        rest-batches (partition part-size part-size [] (rest rows))
+        rest-batches (partition-all part-size (rest rows))
         first-batch [(-> (Request.)
-                         (.setDeleteDimension (-> (DeleteDimensionRequest.)
-                                                  (.setRange (-> (DimensionRange.)
-                                                                 (.setDimension "ROWS")
-                                                                 (.setSheetId sheet-id)
-                                                                 (.setStartIndex (int 1))
-                                                                 (.setEndIndex (int 9999)))))))
+                         (.setDeleteDimension
+                          (-> (DeleteDimensionRequest.)
+                              (.setRange
+                               (-> (DimensionRange.)
+                                   (.setDimension "ROWS")
+                                   (.setSheetId sheet-id)
+                                   (.setStartIndex (int 1))
+                                   (.setEndIndex (int (inc (count rows)))))))))
+                     (-> (Request.)
+                         (.setUpdateSheetProperties
+                          (-> (UpdateSheetPropertiesRequest.)
+                              (.setFields "gridProperties")
+                              (.setProperties
+                               (-> (SheetProperties.)
+                                   (.setGridProperties
+                                    (-> (GridProperties.)
+                                        (.setRowCount (int (count rows)))
+                                        (.setColumnCount (int num-cols)))))))))
                      (-> (Request.)
                          (.setUpdateCells (-> (UpdateCellsRequest.)
                                               (.setStart (-> (GridCoordinate.)

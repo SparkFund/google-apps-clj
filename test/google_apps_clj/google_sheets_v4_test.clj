@@ -7,21 +7,21 @@
             [google-apps-clj.google-sheets-v4 :refer :all])
   (:import [com.google.api.services.sheets.v4.model CellData RowData]))
 
-(deftest test-cell-data-conversion
-  (is (= "foo" (cell-data->clj "foo")))
-  (is (= 2.0 (cell-data->clj 2.0)))
+(deftest test-cell-conversion
+  (is (= "foo" (cell->clj "foo")))
+  (is (= 2.0 (cell->clj 2.0)))
   (is (= (time/date-time 1950 6 15)
-         (cell-data->clj (time/date-time 1950 6 15))))
-  (is (= "foo" (cell-data->clj (coerce-to-cell-data "foo"))))
-  (is (= 2.0 (cell-data->clj (coerce-to-cell-data 2.0M))))
-  (is (= ":foo" (cell-data->clj (coerce-to-cell-data :foo))))
-  (is (= nil (cell-data->clj (coerce-to-cell-data nil))))
+         (cell->clj (time/date-time 1950 6 15))))
+  (is (= "foo" (cell->clj (coerce-to-cell "foo"))))
+  (is (= 2.0 (cell->clj (coerce-to-cell 2.0M))))
+  (is (= ":foo" (cell->clj (coerce-to-cell :foo))))
+  (is (= nil (cell->clj (coerce-to-cell nil))))
   (is (= (time/date-time 1950 6 15)
-         (cell-data->clj (coerce-to-cell-data (time/date-time 1950 6 15)))))
-  (is (= 2.01M (cell-data->clj (currency-cell-data 2.01M))))
-  (is (instance? CellData (cell-data->clj (formula-cell-data "A1+B2"))))
+         (cell->clj (coerce-to-cell (time/date-time 1950 6 15)))))
+  (is (= 2.01M (cell->clj (currency-cell 2.01M))))
+  (is (instance? CellData (cell->clj (formula-cell "A1+B2"))))
   (is (instance? RowData (row->row-data ["foo" nil 2.0])))
-  (is (thrown? Exception (coerce-to-cell-data 299792.457999999984M))))
+  (is (thrown? Exception (coerce-to-cell 299792.457999999984M))))
 
 (deftest ^:integration test-scenario
   (let [creds (cred/default-credential (into scopes
@@ -64,43 +64,43 @@
                 response (append-sheet service @spreadsheet-id @sheet-id rows)]
             (is (= 1 (count response)))
             (is (= @spreadsheet-id (get (first response) "spreadsheetId")))))
-        (testing "get-cell-data"
-          (let [cells (get-cell-data service @spreadsheet-id ["new tab!A1:Z3"])]
+        (testing "get-cells"
+          (let [cells (get-cells service @spreadsheet-id ["new tab!A1:Z3"])]
             (is (= 1 (count cells)))
             (is (= 3 (count (first cells))))
             (is (apply = 26 (map count (first cells))))))
-        (testing "get-effective-vals"
+        (testing "get-cell-values"
           (testing "entire range, specified"
-            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:Z3"])]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!A1:Z3"])]
               (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
                        (into [] (repeat 26 0.0))
                        (into [] (repeat 26 "test"))]]
                      data))))
           (testing "subrange, specified"
-            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:A5"])]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!A1:A5"])]
               (is (= [[["A"] [0.0] ["test"]]]
                      data))))
           (testing "column range"
-            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A:A"])]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!A:A"])]
               (is (= [[["A"] [0.0] ["test"]]] data))))
           (testing "row range"
-            (let [data (get-effective-vals service @spreadsheet-id ["new tab!1:1"])]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!1:1"])]
               (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))]]
                      data))))
           (testing "partial column range"
-            (let [data (get-effective-vals service @spreadsheet-id ["new tab!A2:A"])]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!A2:A"])]
               (is (= [[[0.0] ["test"]]] data))))
           (testing "partial row range"
-            (let [data (get-effective-vals service @spreadsheet-id ["new tab!B2:2"])]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!B2:2"])]
               (is (= [[(into [] (repeat 25 0.0))]] data))))
           (testing "entire range"
-            (let [data (get-effective-vals service @spreadsheet-id ["new tab"])]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab"])]
               (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
                        (into [] (repeat 26 0.0))
                        (into [] (repeat 26 "test"))]]
                      data))))
           (testing "specific range from the (implicit) first sheet"
-            (let [data (get-effective-vals service @spreadsheet-id ["A1:A2"])]
+            (let [data (get-cell-values service @spreadsheet-id ["A1:A2"])]
               (is (= [[]] data))))))
       (finally
         (gdrive/delete-file! creds id)))))

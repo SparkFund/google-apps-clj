@@ -74,7 +74,7 @@
        (map #(get % "properties"))
        (mapv (juxt #(get % "title") #(get % "sheetId")))))
 
-(defn date-cell-data
+(defn date-cell
   "Returns a CellData containing the given date, formatted using the given excel
    date formatting string, e.g. \"yyyy-mm-dd\" or \"M/d/yyyy\""
   [pattern dt]
@@ -91,7 +91,7 @@
                 (.setType "DATE")
                 (.setPattern pattern)))))))
 
-(defn formula-cell-data
+(defn formula-cell
   "Returns a CellData containing the given formula"
   [str]
   (-> (CellData.)
@@ -129,17 +129,17 @@
     cd)
   org.joda.time.DateTime
   (->cell-data [dt]
-    (date-cell-data "yyyy-mm-dd" dt))
+    (date-cell "yyyy-mm-dd" dt))
   nil
   (->cell-data [_]
     (CellData.)))
 
-(defn coerce-to-cell-data
+(defn coerce-to-cell
   "Numbers and strings and keywords and date-times auto-coerce to CellData"
   [x]
   (->cell-data x))
 
-(defn currency-cell-data
+(defn currency-cell
   "Returns a CellData containing the given value formatted as currency"
   [v]
   (-> (->cell-data v)
@@ -149,7 +149,7 @@
             (-> (NumberFormat.)
                 (.setType "CURRENCY")))))))
 
-(defn cell-data->clj
+(defn cell->clj
   "Converts cell data with either a userEnteredValue (x)or effectiveValue to a clojure type.
   stringValue -> string
   numberValue -> double
@@ -197,7 +197,7 @@
   "google-ifies a row (list of columns) of type string?, number? keyword? or CellData."
   [row]
   (-> (RowData.)
-      (.setValues (map coerce-to-cell-data row))))
+      (.setValues (map coerce-to-cell row))))
 
 (defn write-sheet
   "writes values to a specific sheet (tab). Breaks down requests into batches of ~10k cells.
@@ -328,7 +328,7 @@
   (or (find-sheet-id service spreadsheet-id sheet-title)
       (get (add-sheet service spreadsheet-id sheet-title) "sheetId")))
 
-(defn get-cell-data
+(defn get-cells
   "sheet-ranges is a seq of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]
    Returns a vector of tables in corresponding to sheet-ranges.  Only one
    sheet (tab) can be specified per batch, due to a quirk of Google's API as far
@@ -357,11 +357,11 @@
                           (into {}))]
     (mapv title->table sheet-titles)))
 
-(defn get-effective-vals
+(defn get-cell-values
   "sheet-ranges is a seq of strings, using the A1 syntax, eg [\"Sheet!A1:Z9\"]
    Returns a vector of tables in corresponding to sheet-ranges.  Only one
    sheet (tab) can be specified per batch, due to a quirk of Google's API as far
    as we can tell."
   [^Sheets service spreadsheet-id sheet-ranges]
-  (let [tables (get-cell-data service spreadsheet-id sheet-ranges)]
-    (mapv (partial mapv (partial mapv cell-data->clj)) tables)))
+  (let [tables (get-cells service spreadsheet-id sheet-ranges)]
+    (mapv (partial mapv (partial mapv cell->clj)) tables)))

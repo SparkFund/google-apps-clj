@@ -77,6 +77,15 @@
                    data)))
           (let [data (get-effective-vals service @spreadsheet-id ["new tab!A1:A5"])]
             (is (= [[["A"] [0.0] ["test"]]]
-                   data)))))
+                   data)))
+          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A:A"])]
+            (is (= [[["A"] [0.0] ["test"]]] data)))
+          (let [data (get-effective-vals service @spreadsheet-id ["new tab!1:1"])]
+            (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))]]
+                   data)))
+          (let [data (get-effective-vals service @spreadsheet-id ["new tab!A2:A"])]
+            (is (= [[[0.0] ["test"]]] data)))
+          (let [data (get-effective-vals service @spreadsheet-id ["new tab!B2:2"])]
+            (is (= [[(into [] (repeat 25 0.0))]] data)))))
       (finally
         (gdrive/delete-file! creds id)))))

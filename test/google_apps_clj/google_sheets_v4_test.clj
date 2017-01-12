@@ -62,6 +62,11 @@
                 response (append-sheet service @spreadsheet-id @sheet-id rows)]
             (is (= 1 (count response)))
             (is (= @spreadsheet-id (get (first response) "spreadsheetId")))))
+        (testing "get-sheet-info"
+          (let [info (get-sheet-info service @spreadsheet-id @sheet-id)
+                grid (get info "gridProperties")]
+            (is (= 3 (get grid "rowCount")))
+            (is (= 26 (get grid "columnCount")))))
         (testing "get-cells"
           (let [cells (get-cells service @spreadsheet-id ["new tab!A1:Z3"])]
             (is (= 1 (count cells)))

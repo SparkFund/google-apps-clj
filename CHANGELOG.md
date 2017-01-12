@@ -1,5 +1,12 @@
 # google-apps-clj changes
 
+0.6.0 (2017-01-12)
+------------------
+
+**Features**
+
+* Substantially revises google-apps-clj.google-sheets-v4 vars
+
 0.5.3 (2016-08-14)
 ------------------
 

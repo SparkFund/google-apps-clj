@@ -67,6 +67,15 @@
       (.get spreadsheet-id)
       (.execute)))
 
+(defn get-sheet-info
+  [service spreadsheet-id sheet-id]
+  (let [sheets (get (get-spreadsheet-info service spreadsheet-id) "sheets")]
+    (some (fn [sheet]
+            (let [properties (get sheet "properties")]
+              (when (= sheet-id (get properties "sheetId"))
+                properties)))
+          sheets)))
+
 (defn get-sheet-titles
   [service spreadsheet-id]
   "returns a list of [sheet-title sheet-id] tuples. It seems the order reflects
@@ -216,56 +225,54 @@
         part-size (long (/ 10000 num-cols))
         rest-batches (partition-all part-size (rest rows))
         first-batch [(-> (Request.)
-                         (.setDeleteDimension
-                          (-> (DeleteDimensionRequest.)
-                              (.setRange
-                               (-> (DimensionRange.)
-                                   (.setDimension "ROWS")
-                                   (.setSheetId sheet-id)
-                                   (.setStartIndex (int 1))
-                                   (.setEndIndex (int (inc (count rows)))))))))
-                     (-> (Request.)
                          (.setUpdateSheetProperties
                           (-> (UpdateSheetPropertiesRequest.)
                               (.setFields "gridProperties")
                               (.setProperties
                                (-> (SheetProperties.)
+                                   (.setSheetId sheet-id)
                                    (.setGridProperties
                                     (-> (GridProperties.)
                                         (.setRowCount (int (count rows)))
                                         (.setColumnCount (int num-cols)))))))))
                      (-> (Request.)
-                         (.setUpdateCells (-> (UpdateCellsRequest.)
-                                              (.setStart (-> (GridCoordinate.)
-                                                             (.setSheetId sheet-id)
-                                                             (.setRowIndex (int 0))
-                                                             (.setColumnIndex (int 0))))
-                                              (.setRows [(row->row-data first-row)])
-                                              (.setFields "userEnteredValue,userEnteredFormat"))))
+                         (.setUpdateCells
+                          (-> (UpdateCellsRequest.)
+                              (.setStart
+                               (-> (GridCoordinate.)
+                                   (.setSheetId sheet-id)
+                                   (.setRowIndex (int 0))
+                                   (.setColumnIndex (int 0))))
+                              (.setRows
+                               [(row->row-data first-row)])
+                              (.setFields "userEnteredValue,userEnteredFormat"))))
                      (-> (Request.)
-                         (.setAppendCells (-> (AppendCellsRequest.)
-                                              (.setSheetId sheet-id)
-                                              (.setRows (map row->row-data (first rest-batches)))
-                                              (.setFields "userEnteredValue,userEnteredFormat"))))]]
-    (doall (cons (-> service
-                     (.spreadsheets)
-                     (.batchUpdate spreadsheet-id
-                                   (-> (BatchUpdateSpreadsheetRequest.) (.setRequests first-batch)))
-                     (.execute))
-                 (map (fn [batch]
-                        (-> service
-                            (.spreadsheets)
-                            (.batchUpdate
-                             spreadsheet-id
-                             (-> (BatchUpdateSpreadsheetRequest.)
-                                 (.setRequests [(-> (Request.)
-                                                    (.setAppendCells
-                                                     (-> (AppendCellsRequest.)
-                                                         (.setSheetId sheet-id)
-                                                         (.setRows (map row->row-data batch))
-                                                         (.setFields "userEnteredValue,userEnteredFormat"))))])))
-                            (.execute)))
-                      (rest rest-batches))))))
+                         (.setAppendCells
+                          (-> (AppendCellsRequest.)
+                              (.setSheetId sheet-id)
+                              (.setRows (map row->row-data (first rest-batches)))
+                              (.setFields "userEnteredValue,userEnteredFormat"))))]]
+    (-> service
+        (.spreadsheets)
+        (.batchUpdate
+         spreadsheet-id
+         (-> (BatchUpdateSpreadsheetRequest.)
+             (.setRequests first-batch)))
+        (.execute))
+    (doseq [batch (rest rest-batches)]
+      (-> service
+          (.spreadsheets)
+          (.batchUpdate
+           spreadsheet-id
+           (-> (BatchUpdateSpreadsheetRequest.)
+               (.setRequests
+                [(-> (Request.)
+                     (.setAppendCells
+                      (-> (AppendCellsRequest.)
+                          (.setSheetId sheet-id)
+                          (.setRows (map row->row-data batch))
+                          (.setFields "userEnteredValue,userEnteredFormat"))))])))
+          (.execute)))))
 
 (defn append-sheet
   "appends rows to a specific sheet (tab). Appends starting at the last

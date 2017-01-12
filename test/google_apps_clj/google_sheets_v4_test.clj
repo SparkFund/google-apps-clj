@@ -55,10 +55,8 @@
             (is (= new-sheet-id (find-sheet-id service @spreadsheet-id "another tab")))))
         (testing "write-sheet"
           (let [rows [(mapv (comp str char) (range (int \A) (inc (int \Z))))
-                      (into [] (repeat 26 0))]
-                response (write-sheet service @spreadsheet-id @sheet-id rows)]
-            (is (= 1 (count response)))
-            (is (= @spreadsheet-id (get (first response) "spreadsheetId")))))
+                      (into [] (repeat 26 0))]]
+            (is (nil? (write-sheet service @spreadsheet-id @sheet-id rows)))))
         (testing "append-sheet"
           (let [rows [(into [] (repeat 26 "test"))]
                 response (append-sheet service @spreadsheet-id @sheet-id rows)]

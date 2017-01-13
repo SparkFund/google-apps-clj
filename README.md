@@ -15,28 +15,31 @@ Latest test results (Thanks, [CircleCI](https://github.com/CircleCI)!):
 If you're using Leiningen, just add this to your `project.clj`:
 
 ```clj
-[google-apps-clj "0.5.3"]
+[google-apps-clj "0.6.0"]
 ```
 
 If you are using ClojureScript, there's a dependency conflict (see [#22](https://github.com/SparkFund/google-apps-clj/issues/22)) between Google Closure Compiler and the Google Apps API library , so you'll have to add an exclusion, like so:
 
 ```clj
-[google-apps-clj "0.5.3" :exclusions [com.google.guava/guava-jdk5]]
+[google-apps-clj "0.6.0" :exclusions [com.google.guava/guava-jdk5]]
 ```
 
 Check out [CHANGELOG.md](CHANGELOG.md) to see what's been updated lately.
+
+#### Upgrading from 0.5.3
+
+The sheets v4 ns was substantially revised.
 
 #### Upgrading from 0.4.x
 
 Major breaking changes were made to the Google Drive code in v0.5.0 which will require updating most of
 your code that interacts with Google Drive.  Please see [CHANGELOG.md](CHANGELOG.md) for details.
 
-
 ## Currently supported APIs
 
 * Google OAuth 2.0
 * Google Drive
-* Google Spreadsheets
+* Google Spreadsheets (v3 and v4)
 * Google Calendar
 
 ## Usage
@@ -143,6 +146,6 @@ The service account user won't show up by name in searches, but it can be added 
 
 ## License
 
-Copyright © SparkFund 2015-2016
+Copyright © SparkFund 2015-2017
 
 Distributed under the Apache License, Version 2.0. See [LICENSE.txt](LICENSE.txt) for details.

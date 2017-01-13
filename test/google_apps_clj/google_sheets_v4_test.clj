@@ -115,6 +115,19 @@
                      data))))
           (testing "specific range from the (implicit) first sheet"
             (let [data (get-cell-values service @spreadsheet-id ["A1:A2"])]
-              (is (= [[]] data))))))
+              (is (= [[]] data)))))
+        (testing "rewriting a sheet"
+          (write-sheet service @spreadsheet-id @sheet-id [["alpha" "beta" "gamma"]
+                                                          [1 2 3]])
+          (let [data (get-cell-values service @spreadsheet-id ["new tab"])]
+            (is (= [[["alpha" "beta" "gamma"]
+                     [1.0 2.0 3.0]]] data))))
+        (testing "rewriting a sheet in batches"
+          (let [data (partition-all 10 (repeat 100 "x"))]
+            (write-sheet service @spreadsheet-id @sheet-id data {:batch-size 20})
+            (is (= [data] (get-cell-values service @spreadsheet-id ["new tab"]))))
+          (let [data (partition-all 10 (repeat 120 "a"))]
+            (write-sheet service @spreadsheet-id @sheet-id data {:batch-size 20})
+            (is (= [data] (get-cell-values service @spreadsheet-id ["new tab"]))))))
       (finally
         (gdrive/delete-file! creds id)))))

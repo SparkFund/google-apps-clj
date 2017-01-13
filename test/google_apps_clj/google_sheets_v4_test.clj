@@ -54,53 +54,64 @@
             (is (not= @sheet-id new-sheet-id))
             (is (= new-sheet-id (find-sheet-id service @spreadsheet-id "another tab")))))
         (testing "write-sheet"
-          (let [rows [(mapv (comp str char) (range (int \A) (inc (int \Z))))
-                      (into [] (repeat 26 0))]]
+          (let [rows [["Do" "Re" "Mi"]
+                      [60 62 64]]]
             (is (nil? (write-sheet service @spreadsheet-id @sheet-id rows)))))
         (testing "append-sheet"
-          (let [rows [(into [] (repeat 26 "test"))]
+          (let [rows [["C" "D" "E"]
+                      [1 2 3]]
                 response (append-sheet service @spreadsheet-id @sheet-id rows)]
             (is (= 1 (count response)))
             (is (= @spreadsheet-id (get (first response) "spreadsheetId")))))
         (testing "get-sheet-info"
           (let [info (get-sheet-info service @spreadsheet-id @sheet-id)
                 grid (get info "gridProperties")]
-            (is (= 3 (get grid "rowCount")))
-            (is (= 26 (get grid "columnCount")))))
+            (is (= 4 (get grid "rowCount")))
+            (is (= 3 (get grid "columnCount")))))
         (testing "get-cells"
-          (let [cells (get-cells service @spreadsheet-id ["new tab!A1:Z3"])]
+          (let [cells (get-cells service @spreadsheet-id ["new tab"])]
             (is (= 1 (count cells)))
-            (is (= 3 (count (first cells))))
-            (is (apply = 26 (map count (first cells))))))
+            (is (= 4 (count (first cells))))
+            (is (apply = 3 (map count (first cells))))))
         (testing "get-cell-values"
           (testing "entire range, specified"
-            (let [data (get-cell-values service @spreadsheet-id ["new tab!A1:Z3"])]
-              (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
-                       (into [] (repeat 26 0.0))
-                       (into [] (repeat 26 "test"))]]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!A1:C4"])]
+              (is (= [[["Do" "Re" "Mi"]
+                       [60.0 62.0 64.0]
+                       ["C" "D" "E"]
+                       [1.0 2.0 3.0]]]
                      data))))
           (testing "subrange, specified"
-            (let [data (get-cell-values service @spreadsheet-id ["new tab!A1:A5"])]
-              (is (= [[["A"] [0.0] ["test"]]]
+            (let [data (get-cell-values service @spreadsheet-id ["new tab!A1:A2"])]
+              (is (= [[["Do"]
+                       [60.0]]]
                      data))))
           (testing "column range"
             (let [data (get-cell-values service @spreadsheet-id ["new tab!A:A"])]
-              (is (= [[["A"] [0.0] ["test"]]] data))))
+              (is (= [[["Do"]
+                       [60.0]
+                       ["C"]
+                       [1.0]]]
+                     data))))
           (testing "row range"
             (let [data (get-cell-values service @spreadsheet-id ["new tab!1:1"])]
-              (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))]]
+              (is (= [[["Do" "Re" "Mi"]]]
                      data))))
           (testing "partial column range"
             (let [data (get-cell-values service @spreadsheet-id ["new tab!A2:A"])]
-              (is (= [[[0.0] ["test"]]] data))))
+              (is (= [[[60.0]
+                       ["C"]
+                       [1.0]]]
+                     data))))
           (testing "partial row range"
             (let [data (get-cell-values service @spreadsheet-id ["new tab!B2:2"])]
-              (is (= [[(into [] (repeat 25 0.0))]] data))))
+              (is (= [[[62.0 64.0]]] data))))
           (testing "entire range"
             (let [data (get-cell-values service @spreadsheet-id ["new tab"])]
-              (is (= [[(mapv (comp str char) (range (int \A) (inc (int \Z))))
-                       (into [] (repeat 26 0.0))
-                       (into [] (repeat 26 "test"))]]
+              (is (= [[["Do" "Re" "Mi"]
+                       [60.0 62.0 64.0]
+                       ["C" "D" "E"]
+                       [1.0 2.0 3.0]]]
                      data))))
           (testing "specific range from the (implicit) first sheet"
             (let [data (get-cell-values service @spreadsheet-id ["A1:A2"])]

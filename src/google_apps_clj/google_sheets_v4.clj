@@ -173,8 +173,8 @@
         string-val (get v "stringValue")
         number-val (get v "numberValue")
         number-format (get-in cell-data ["userEnteredFormat" "numberFormat" "type"])
-        date? (= "DATE" number-format)
-        currency? (= "CURRENCY" number-format)
+        date? (and (= "DATE" number-format) (some? number-val))
+        currency? (and (= "CURRENCY" number-format) (some? number-val))
         empty-cell? (and (nil? ev) (nil? uev) (instance? CellData cell-data))]
     (when (and (some? ev)
                (some? uev))

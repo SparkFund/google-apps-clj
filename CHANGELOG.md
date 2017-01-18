@@ -1,5 +1,13 @@
 # google-apps-clj changes
 
+0.6.1 (2017-01-18)
+------------------
+
+**Bug Fixes**
+
+* Fix write-sheets with one row
+* Fix reading empty currency and date cells
+
 0.6.0 (2017-01-12)
 ------------------
 

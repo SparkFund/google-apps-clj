@@ -54,11 +54,11 @@
             (is (not= @sheet-id new-sheet-id))
             (is (= new-sheet-id (find-sheet-id service @spreadsheet-id "another tab")))))
         (testing "write-sheet"
-          (let [rows [["Do" "Re" "Mi"]
-                      [60 62 64]]]
+          (let [rows [["Do" "Re" "Mi"]]]
             (is (nil? (write-sheet service @spreadsheet-id @sheet-id rows)))))
         (testing "append-sheet"
-          (let [rows [["C" "D" "E"]
+          (let [rows [[60 62 64]
+                      ["C" "D" "E"]
                       [1 2 3]]
                 response (append-sheet service @spreadsheet-id @sheet-id rows)]
             (is (= 1 (count response)))

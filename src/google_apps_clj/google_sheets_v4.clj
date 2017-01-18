@@ -230,7 +230,8 @@
          first-row (first rows)
          part-size (long (/ batch-size num-cols))
          rest-batches (partition-all part-size (rest rows))
-         first-batch [(-> (Request.)
+         first-batch (concat
+                      [(-> (Request.)
                           (.setUpdateSheetProperties
                            (-> (UpdateSheetPropertiesRequest.)
                                (.setFields "gridProperties")
@@ -240,8 +241,9 @@
                                     (.setGridProperties
                                      (-> (GridProperties.)
                                          (.setRowCount (int (count rows)))
-                                         (.setColumnCount (int num-cols)))))))))
-                      (-> (Request.)
+                                          (.setColumnCount (int num-cols)))))))))]
+                      (when (< 0 (count rows))
+                        [(-> (Request.)
                           (.setUpdateCells
                            (-> (UpdateCellsRequest.)
                                (.setStart
@@ -250,8 +252,9 @@
                                     (.setRowIndex (int 0))
                                     (.setColumnIndex (int 0))))
                                (.setRows [(row->row-data first-row)])
-                               (.setFields "userEnteredValue,userEnteredFormat"))))
-                      (-> (Request.)
+                                  (.setFields "userEnteredValue,userEnteredFormat"))))])
+                      (when (< 1 (count rows))
+                        [(-> (Request.)
                           (.setUpdateCells
                            (-> (UpdateCellsRequest.)
                                (.setStart
@@ -260,7 +263,7 @@
                                     (.setRowIndex (int 1))
                                     (.setColumnIndex (int 0))))
                                (.setRows (map row->row-data (first rest-batches)))
-                               (.setFields "userEnteredValue,userEnteredFormat"))))]]
+                                  (.setFields "userEnteredValue,userEnteredFormat"))))]))]
      (-> service
          (.spreadsheets)
          (.batchUpdate

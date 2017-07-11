@@ -126,6 +126,12 @@
         (.setUserEnteredValue
          (-> (ExtendedValue.)
              (.setNumberValue (double n))))))
+  Boolean
+  (->cell-data [b]
+    (-> (CellData.)
+        (.setUserEnteredValue
+          (-> (ExtendedValue.)
+              (.setBoolValue b)))))
   String
   (->cell-data [s]
     (-> (CellData.)

@@ -241,7 +241,7 @@
 ;; TODO check when exceeding max payload size and e.g. cut the request in half?
 ;; TODO retry with backoff in case of http errors? Feels like that could be a
 ;; policy applied on the service object tho
-(defn execute-requests!
+(defn execute-batch-update-requests!
   [^Sheets service spreadsheet-id requests]
   (-> service
       (.spreadsheets)
@@ -280,11 +280,11 @@
                                        (let [row-index (inc (* i part-size))]
                                          (update-cells-request sheet-id row-index 0 batch))))
                         (partition-all part-size (rest rows)))]
-     (execute-requests! service spreadsheet-id init-requests)
+     (execute-batch-update-requests! service spreadsheet-id init-requests)
      (let [pool (Executors/newFixedThreadPool concurrent-requests)
            tasks (map (fn [request-batch]
                         (fn []
-                          (execute-requests! service spreadsheet-id request-batch)))
+                          (execute-batch-update-requests! service spreadsheet-id request-batch)))
                       (partition-all requests-per-execute requests))]
        (try
          (doseq [^Future f (.invokeAll pool tasks)]

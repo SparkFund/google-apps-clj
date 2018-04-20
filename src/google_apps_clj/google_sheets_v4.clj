@@ -210,6 +210,44 @@
   (-> (RowData.)
       (.setValues (map coerce-to-cell row))))
 
+(defn clear-cells-request
+  [sheet-id row-count column-count]
+  (-> (Request.)
+      (.setUpdateSheetProperties
+       (-> (UpdateSheetPropertiesRequest.)
+           (.setFields "gridProperties")
+           (.setProperties
+            (-> (SheetProperties.)
+                (.setSheetId sheet-id)
+                (.setGridProperties
+                 (-> (GridProperties.)
+                     (.setRowCount (int row-count))
+                     (.setColumnCount (int column-count))))))))))
+
+(defn update-cells-request
+  [sheet-id row-index column-index rows]
+  (-> (Request.)
+      (.setUpdateCells
+       (-> (UpdateCellsRequest.)
+           (.setStart
+            (-> (GridCoordinate.)
+                (.setSheetId sheet-id)
+                (.setRowIndex (int row-index))
+                (.setColumnIndex (int column-index))))
+           (.setRows (map row->row-data rows))
+           (.setFields "userEnteredValue,userEnteredFormat")))))
+
+(defn execute-requests!
+  [^Sheets service spreadsheet-id requests]
+  (println "execute" 0 (java.util.Date.))
+  (-> service
+      (.spreadsheets)
+      (.batchUpdate
+       spreadsheet-id
+       (-> (BatchUpdateSpreadsheetRequest.)
+           (.setRequests requests)))
+      (.execute)))
+
 (def default-write-sheet-options
   {:batch-size 10000})
 
@@ -226,71 +264,24 @@
    (assert (not-empty rows) "Must write at least one row to the sheet")
    (let [{:keys [batch-size]} (merge default-write-sheet-options options)
          sheet-id (int sheet-id)
+         column-index (int 0)
          num-cols (int (apply max (map count rows)))
          first-row (first rows)
          part-size (long (/ batch-size num-cols))
          rest-batches (partition-all part-size (rest rows))
-         first-batch (concat
-                      [(-> (Request.)
-                          (.setUpdateSheetProperties
-                           (-> (UpdateSheetPropertiesRequest.)
-                               (.setFields "gridProperties")
-                               (.setProperties
-                                (-> (SheetProperties.)
-                                    (.setSheetId sheet-id)
-                                    (.setGridProperties
-                                     (-> (GridProperties.)
-                                         (.setRowCount (int (count rows)))
-                                          (.setColumnCount (int num-cols)))))))))]
-                      (when (< 0 (count rows))
-                        [(-> (Request.)
-                          (.setUpdateCells
-                           (-> (UpdateCellsRequest.)
-                               (.setStart
-                                (-> (GridCoordinate.)
-                                    (.setSheetId sheet-id)
-                                    (.setRowIndex (int 0))
-                                    (.setColumnIndex (int 0))))
-                               (.setRows [(row->row-data first-row)])
-                                  (.setFields "userEnteredValue,userEnteredFormat"))))])
-                      (when (< 1 (count rows))
-                        [(-> (Request.)
-                          (.setUpdateCells
-                           (-> (UpdateCellsRequest.)
-                               (.setStart
-                                (-> (GridCoordinate.)
-                                    (.setSheetId sheet-id)
-                                    (.setRowIndex (int 1))
-                                    (.setColumnIndex (int 0))))
-                               (.setRows (map row->row-data (first rest-batches)))
-                                  (.setFields "userEnteredValue,userEnteredFormat"))))]))]
-     (-> service
-         (.spreadsheets)
-         (.batchUpdate
-          spreadsheet-id
-          (-> (BatchUpdateSpreadsheetRequest.)
-              (.setRequests first-batch)))
-         (.execute))
+         first-requests (concat
+                         [(clear-cells-request sheet-id (count rows) num-cols)]
+                         ;; TODO this guard is literally useless, right?
+                         (when (< 0 (count rows))
+                           [(update-cells-request sheet-id 0 0 [first-row])])
+                         (when (< 1 (count rows))
+                           [(update-cells-request sheet-id 1 0 (first rest-batches))]))]
+     (execute-requests! service spreadsheet-id first-requests)
      (loop [row-index (inc (count (first rest-batches)))
             batches (rest rest-batches)]
        (when (seq batches)
-         (-> service
-             (.spreadsheets)
-             (.batchUpdate
-              spreadsheet-id
-              (-> (BatchUpdateSpreadsheetRequest.)
-                  (.setRequests
-                   [(-> (Request.)
-                        (.setUpdateCells
-                         (-> (UpdateCellsRequest.)
-                             (.setStart
-                              (-> (GridCoordinate.)
-                                  (.setSheetId sheet-id)
-                                  (.setRowIndex (int row-index))
-                                  (.setColumnIndex (int 0))))
-                             (.setRows (map row->row-data (first batches)))
-                             (.setFields "userEnteredValue,userEnteredFormat"))))])))
-             (.execute))
+         (let [request (update-cells-request sheet-id row-index 0 (first batches))]
+           (execute-requests! service spreadsheet-id [request]))
          (recur (+ row-index (count (first batches)))
                 (rest batches)))))))
 

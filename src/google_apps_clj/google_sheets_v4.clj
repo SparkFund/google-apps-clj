@@ -218,7 +218,7 @@
            (.setFields "gridProperties")
            (.setProperties
             (-> (SheetProperties.)
-                (.setSheetId sheet-id)
+                (.setSheetId (int sheet-id))
                 (.setGridProperties
                  (-> (GridProperties.)
                      (.setRowCount (int row-count))
@@ -231,15 +231,17 @@
        (-> (UpdateCellsRequest.)
            (.setStart
             (-> (GridCoordinate.)
-                (.setSheetId sheet-id)
+                (.setSheetId (int sheet-id))
                 (.setRowIndex (int row-index))
                 (.setColumnIndex (int column-index))))
            (.setRows (map row->row-data rows))
            (.setFields "userEnteredValue,userEnteredFormat")))))
 
+;; TODO check when exceeding max payload size and e.g. cut the request in half?
+;; TODO retry with backoff in case of http errors? Feels like that could be a
+;; policy applied on the service object tho
 (defn execute-requests!
   [^Sheets service spreadsheet-id requests]
-  (println "execute" 0 (java.util.Date.))
   (-> service
       (.spreadsheets)
       (.batchUpdate
@@ -249,7 +251,8 @@
       (.execute)))
 
 (def default-write-sheet-options
-  {:batch-size 10000})
+  {:batch-size 10000
+   :requests-per-execute 10})
 
 (defn write-sheet
   "Overwrites the given sheet with the given rows of data. The data on the given
@@ -262,28 +265,25 @@
    (write-sheet service spreadsheet-id sheet-id rows {}))
   ([^Sheets service spreadsheet-id sheet-id rows options]
    (assert (not-empty rows) "Must write at least one row to the sheet")
-   (let [{:keys [batch-size]} (merge default-write-sheet-options options)
-         sheet-id (int sheet-id)
-         column-index (int 0)
-         num-cols (int (apply max (map count rows)))
-         first-row (first rows)
+   (let [options (merge default-write-sheet-options options)
+         {:keys [batch-size requests-per-execute]} options
+         num-cols (apply max (map count rows))
          part-size (long (/ batch-size num-cols))
-         rest-batches (partition-all part-size (rest rows))
-         first-requests (concat
-                         [(clear-cells-request sheet-id (count rows) num-cols)]
-                         ;; TODO this guard is literally useless, right?
-                         (when (< 0 (count rows))
-                           [(update-cells-request sheet-id 0 0 [first-row])])
-                         (when (< 1 (count rows))
-                           [(update-cells-request sheet-id 1 0 (first rest-batches))]))]
-     (execute-requests! service spreadsheet-id first-requests)
-     (loop [row-index (inc (count (first rest-batches)))
-            batches (rest rest-batches)]
-       (when (seq batches)
-         (let [request (update-cells-request sheet-id row-index 0 (first batches))]
-           (execute-requests! service spreadsheet-id [request]))
-         (recur (+ row-index (count (first batches)))
-                (rest batches)))))))
+         ;; We first want to clear the cells to which we're about to write
+         ;; not sure why we write the first row specially but uh we do
+         init-requests [(clear-cells-request sheet-id (count rows) num-cols)
+                        (update-cells-request sheet-id 0 0 [(first rows)])]
+         requests (into []
+                        (map-indexed (fn [i batch]
+                                       (let [row-index (inc (* i part-size))]
+                                         (update-cells-request sheet-id row-index 0 batch))))
+                        (partition-all part-size (rest rows)))]
+     (execute-requests! service spreadsheet-id init-requests)
+     ;; TODO the user should have explicit control over the level of concurrency
+     (doall (pmap (fn [request-batch]
+                    (execute-requests! service spreadsheet-id request-batch))
+                  (partition-all requests-per-execute requests))))
+   nil))
 
 (defn append-sheet
   "appends rows to a specific sheet (tab). Appends starting at the last

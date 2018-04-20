@@ -30,7 +30,8 @@
                                             RowData
                                             SheetProperties
                                             UpdateCellsRequest
-                                            UpdateSheetPropertiesRequest)))
+                                            UpdateSheetPropertiesRequest)
+   (java.util.concurrent Executors Future)))
 
 (def scopes
   [SheetsScopes/SPREADSHEETS])
@@ -252,7 +253,8 @@
 
 (def default-write-sheet-options
   {:batch-size 10000
-   :requests-per-execute 10})
+   :requests-per-execute 10
+   :concurrent-requests 5})
 
 (defn write-sheet
   "Overwrites the given sheet with the given rows of data. The data on the given
@@ -266,7 +268,7 @@
   ([^Sheets service spreadsheet-id sheet-id rows options]
    (assert (not-empty rows) "Must write at least one row to the sheet")
    (let [options (merge default-write-sheet-options options)
-         {:keys [batch-size requests-per-execute]} options
+         {:keys [batch-size concurrent-requests requests-per-execute]} options
          num-cols (apply max (map count rows))
          part-size (long (/ batch-size num-cols))
          ;; We first want to clear the cells to which we're about to write
@@ -279,10 +281,16 @@
                                          (update-cells-request sheet-id row-index 0 batch))))
                         (partition-all part-size (rest rows)))]
      (execute-requests! service spreadsheet-id init-requests)
-     ;; TODO the user should have explicit control over the level of concurrency
-     (doall (pmap (fn [request-batch]
-                    (execute-requests! service spreadsheet-id request-batch))
-                  (partition-all requests-per-execute requests))))
+     (let [pool (Executors/newFixedThreadPool concurrent-requests)
+           tasks (map (fn [request-batch]
+                        (fn []
+                          (execute-requests! service spreadsheet-id request-batch)))
+                      (partition-all requests-per-execute requests))]
+       (try
+         (doseq [^Future f (.invokeAll pool tasks)]
+           (.get f))
+         (finally
+           (.shutdown pool)))))
    nil))
 
 (defn append-sheet

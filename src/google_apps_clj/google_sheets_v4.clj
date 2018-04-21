@@ -10,6 +10,7 @@
                                                  GoogleAuthorizationCodeFlow$Builder
                                                  GoogleClientSecrets)
    (com.google.api.client.googleapis.javanet GoogleNetHttpTransport)
+   (com.google.api.client.googleapis.services AbstractGoogleClientRequest)
    (com.google.api.client.json.jackson2 JacksonFactory)
    (com.google.api.services.sheets.v4 SheetsScopes
                                       Sheets
@@ -31,7 +32,7 @@
                                             SheetProperties
                                             UpdateCellsRequest
                                             UpdateSheetPropertiesRequest)
-   (java.util.concurrent Executors Future)))
+   (java.util.concurrent ExecutorService Future)))
 
 (def scopes
   [SheetsScopes/SPREADSHEETS])
@@ -239,22 +240,63 @@
            (.setFields "userEnteredValue,userEnteredFormat")))))
 
 ;; TODO check when exceeding max payload size and e.g. cut the request in half?
-;; TODO retry with backoff in case of http errors? Feels like that could be a
-;; policy applied on the service object tho
-(defn execute-batch-update-requests!
+(defn ^AbstractGoogleClientRequest batch-update-request
   [^Sheets service spreadsheet-id requests]
   (-> service
       (.spreadsheets)
       (.batchUpdate
        spreadsheet-id
        (-> (BatchUpdateSpreadsheetRequest.)
-           (.setRequests requests)))
-      (.execute)))
+           (.setRequests requests)))))
+
+(def default-sheet-writer-config
+  {::cells-per-request 10000
+   ::requests-per-batch 10})
+
+(defn build-sheet-writer
+  "Builds fns that will overwrite the sheet with the given rows of
+   data. The data on the given sheet will be deleted and it will be
+   resized to fit the given data exactly.
+
+   This returns a seq of seqs of thunks suitable for use with execute!."
+  ([service spreadsheet-id sheet-id rows]
+   (build-sheet-writer service spreadsheet-id sheet-id rows {}))
+  ([^Sheets service spreadsheet-id sheet-id rows config]
+   (when (seq rows)
+     (let [config (merge default-sheet-writer-config config)
+           {::keys [cells-per-request requests-per-batch]} config
+           num-cols (apply max (map count rows))
+           rows-per-request (long (/ cells-per-request num-cols))
+           ;; We first want to clear the cells to which we're about to write
+           ;; not sure why we write the first row specially but uh we do
+           init-requests [(clear-cells-request sheet-id (count rows) num-cols)
+                          (update-cells-request sheet-id 0 0 [(first rows)])]
+           requests (into []
+                          (map-indexed (fn [i batch]
+                                         (let [row-index (inc (* i rows-per-request))]
+                                           (update-cells-request sheet-id row-index 0 batch))))
+                          (partition-all rows-per-request (rest rows)))]
+       [[(let [request (batch-update-request service spreadsheet-id init-requests)]
+           (fn [] (.execute request)))]
+        (into []
+              (map (fn [batch]
+                     (let [request (batch-update-request service spreadsheet-id batch)]
+                       (fn [] (.execute request)))))
+              (partition-all requests-per-batch requests))]))))
+
+(defn execute!
+  "This executes the seq of seqs of thunks in the given executor service"
+  [^ExecutorService executor thunkss]
+  (into []
+        (map (fn [thunks]
+               (into []
+                     (map (fn [f] (.get ^Future f)))
+                     (.invokeAll executor thunks))))
+        thunkss))
 
 (def default-write-sheet-options
   {:batch-size 10000
-   :requests-per-execute 10
-   :concurrent-requests 5})
+   :requests-per-execute 10})
 
 (defn write-sheet
   "Overwrites the given sheet with the given rows of data. The data on the given
@@ -263,35 +305,11 @@
    This will be batched into requests of approximately 10k cell values. Larger
    requests yielded errors, though there is apparently no explicit limit or
    guidance given."
-  ([service spreadsheet-id sheet-id rows]
-   (write-sheet service spreadsheet-id sheet-id rows {}))
-  ([^Sheets service spreadsheet-id sheet-id rows options]
-   (assert (not-empty rows) "Must write at least one row to the sheet")
-   (let [options (merge default-write-sheet-options options)
-         {:keys [batch-size concurrent-requests requests-per-execute]} options
-         num-cols (apply max (map count rows))
-         part-size (long (/ batch-size num-cols))
-         ;; We first want to clear the cells to which we're about to write
-         ;; not sure why we write the first row specially but uh we do
-         init-requests [(clear-cells-request sheet-id (count rows) num-cols)
-                        (update-cells-request sheet-id 0 0 [(first rows)])]
-         requests (into []
-                        (map-indexed (fn [i batch]
-                                       (let [row-index (inc (* i part-size))]
-                                         (update-cells-request sheet-id row-index 0 batch))))
-                        (partition-all part-size (rest rows)))]
-     (execute-batch-update-requests! service spreadsheet-id init-requests)
-     (let [pool (Executors/newFixedThreadPool concurrent-requests)
-           tasks (map (fn [request-batch]
-                        (fn []
-                          (execute-batch-update-requests! service spreadsheet-id request-batch)))
-                      (partition-all requests-per-execute requests))]
-       (try
-         (doseq [^Future f (.invokeAll pool tasks)]
-           (.get f))
-         (finally
-           (.shutdown pool)))))
-   nil))
+  [service spreadsheet-id sheet-id rows]
+  (let [thunkss (build-sheet-writer service spreadsheet-id sheet-id rows)]
+    (doseq [thunks thunkss
+            thunk thunks]
+      (thunk))))
 
 (defn append-sheet
   "appends rows to a specific sheet (tab). Appends starting at the last

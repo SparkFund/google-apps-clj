@@ -14,9 +14,12 @@
 ;; the the service while it's sad.
 
 (defn build-service
-  [app creds]
-  (.build (doto (Sheets$Builder. credentials/http-transport credentials/json-factory creds)
-            (.setApplicationName app))))
+  [config]
+  (let [{::keys [app credentials]} config]
+    (.build (doto (Sheets$Builder. credentials/http-transport
+                                   credentials/json-factory
+                                   credentials)
+              (.setApplicationName app)))))
 
 (defn build-executor
   "Builds an executor client that execute google client requests concurrently.
@@ -28,7 +31,8 @@
 
    When the control channel closes, the client closes the input channel. All
    pending work is allowed an opportunity to finish, after which their output
-   channels are closed."
+   channels are closed. The executor is guaranteed to be finished cleaning up
+   when the client channel closes."
   [config]
   (let [{::keys [concurrency ^Duration shutdown-duration]} config
         control (async/chan)
@@ -63,29 +67,32 @@
 
                      ;; must be a worker
                      (recur (disj workers chan) shutdown))))]
-    {::control control
+    {::client client
+     ::control control
      ::input input}))
 
-(defn execute-requests!
-  [executor requests]
-  (into []
-        (map (fn [request]
-               (let [output (async/chan)]
-                 (when (async/>!! executor [request output])
-                   output))))
-        requests))
-
-(defn realize-responses!
-  [outputs]
-  (into []
-        (map (fn [output]
-               (when output
-                 (async/<!! output))))
-        outputs))
-
-(defn all-succeeded?
-  [responses]
-  (every? first responses))
+(defn execute-requestss
+  [executor requestss]
+  (async/go
+    (reduce (fn [responsess requests]
+              (if-not (reduced? responsess)
+                (let [outputs (into []
+                                    (map (fn [request]
+                                           (let [output (async/chan)]
+                                             (when (async/>! executor [request output])))))
+                                    requests)
+                      responses (into []
+                                      (map (fn [output]
+                                             (when output
+                                               (async/<! output))))
+                                      outputs)
+                      all-successes? (every? first responses)]
+                  (cond-> (conj responsess responses)
+                    (not all-successes?)
+                    reduced))
+                responsess))
+            []
+            requestss)))
 
 ;; TODO
 (defn clear-cells-request
@@ -103,7 +110,6 @@
   {::cells-per-request 10000
    ::requests-per-batch 10})
 
-;; TODO have this return a channel on which it writes its ultimate response
 (defn write-sheet!
   [config executor service spreadsheet-id sheet-id rows]
   (when (seq rows)
@@ -115,17 +121,22 @@
           ;; not sure why we write the first row specially but uh we do
           init-requests [(clear-cells-request sheet-id (count rows) num-cols)
                          (update-cells-request sheet-id 0 0 [(first rows)])]
+          init-batch-requests [(batch-update-request service spreadsheet-id init-requests)]
           data-requests (into []
                               (map-indexed (fn [i batch]
                                              (let [row-index (inc (* i rows-per-request))]
                                                (update-cells-request sheet-id row-index 0 batch))))
-                              (partition-all rows-per-request (rest rows)))]
-      (when (let [request (batch-update-request service spreadsheet-id init-requests)
-                  responses (realize-responses! (execute-requests! executor [request]))]
-              (all-succeeded? responses))
-        (let [requests (into []
-                             (map (fn [batch]
-                                    (batch-update-request service spreadsheet-id batch)))
-                             (partition-all requests-per-batch data-requests))
-              responses (realize-responses! (execute-requests! executor requests))]
-          (all-succeeded? responses))))))
+                              (partition-all rows-per-request (rest rows)))
+          batch-requests (into []
+                               (map (fn [batch]
+                                      (batch-update-request service spreadsheet-id batch)))
+                               (partition-all requests-per-batch data-requests))
+          requestss [init-batch-requests
+                     batch-requests]]
+      (async/go
+        (let [responsess (async/<! (execute-requestss executor requestss))
+              successes (into []
+                              (map (fn [responses]
+                                     (every? first responses)))
+                              responsess)]
+          (every? true? successes))))))

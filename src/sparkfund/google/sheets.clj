@@ -36,9 +36,7 @@
   "Builds an executor client that execute google client requests concurrently.
 
    This returns an input channel and a control channel. The input channel
-   expects tuples of [request output], where the output is a channel to which
-   tuples of [success? value] are written, value being the response on success
-   and the exception on failure.
+   expects maps of ::request ::output, where the output is a channel to which
 
    When the control channel closes, the client closes the input channel. All
    pending work is allowed an opportunity to finish, after which their output
@@ -60,11 +58,17 @@
                      input
                      (let [{::keys [^AbstractGoogleClientRequest request output]} value
                            worker (async/thread
-                                    (async/>!! output
-                                               (try
-                                                 [true (.execute request)]
-                                                 (catch Exception e
-                                                   [false e]))))]
+                                    (async/put! output
+                                                (try
+                                                  (let [response (.execute request)]
+                                                    (assoc value
+                                                           ::status true
+                                                           ::response response))
+                                                  (catch Exception e
+                                                    (assoc value
+                                                           ::status false
+                                                           ::exception e
+                                                           ::event :execute-exception)))))]
                        (recur (assoc workers worker output) shutdown))
 
                      control
@@ -74,7 +78,8 @@
 
                      shutdown
                      (doseq [output (vals workers)]
-                       (async/close! output))
+                       (async/>! output {::status false
+                                         ::event ::shutdown}))
 
                      ;; must be a worker
                      (recur (disj workers chan) shutdown))))]
@@ -82,34 +87,22 @@
      ::control control
      ::input input}))
 
-(defn execute-requestss
-  "Sends the given seq of seq of requests to the executor to execute. Each
-   seq of requests are sent to the executor, and their responses are
-   accumulated. If all responses succeeded, the next batch is processed.
-
-   This returns a channel which will contain the seq of seq of responses."
-  [executor requestss]
+(defn execute-requests
+  [executor requests]
   (async/go
-    (reduce (fn [responsess requests]
-              (if-not (reduced? responsess)
-                (let [outputs (into []
-                                    (map (fn [request]
-                                           (let [output (async/chan)]
-                                             (when (async/put! executor [request output])
-                                               output))))
-                                    requests)
-                      responses (into []
-                                      (map (fn [output]
-                                             (when output
-                                               (async/<! output))))
-                                      outputs)
-                      all-successes? (every? first responses)]
-                  (cond-> (conj responsess responses)
-                    (not all-successes?)
-                    reduced))
-                responsess))
-            []
-            requestss)))
+    (let [outputs (into []
+                        (map (fn [request]
+                               (let [output (async/promise-chan)
+                                     value {::request request
+                                            ::output output}]
+                                 (when (async/>! executor value)
+                                   output))))
+                        requests)]
+      (into []
+            (map (fn [output]
+                   (when output
+                     (async/<! output))))
+            outputs))))
 
 (defn clear-cells-request
   [sheet-id row-count column-count]
@@ -171,9 +164,8 @@
           batch-requests (into []
                                (map (fn [batch]
                                       (batch-update-request service spreadsheet-id batch)))
-                               (partition-all requests-per-batch data-requests))
-          requestss [init-batch-requests
-                     batch-requests]]
+                               (partition-all requests-per-batch data-requests))]
       (async/go
-        (let [responsess (async/<! (execute-requestss executor requestss))]
-          (every? true? (mapcat (fn [responses] (map first responses)) responsess)))))))
+        (let [responses (async/<! (execute-requests executor init-batch-requests))]
+          (when (every? true? responses)
+            (every? true? (async/<! (execute-requests executor batch-requests)))))))))

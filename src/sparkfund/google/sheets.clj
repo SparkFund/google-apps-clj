@@ -1,5 +1,6 @@
 (ns sparkfund.google.sheets
-  (:require [clojure.core.async :as async]
+  (:require [clj-time.core :as time]
+            [clojure.core.async :as async]
             [google-apps-clj.credentials :as credentials])
   (:import [com.google.api.client.googleapis.services
             AbstractGoogleClientRequest]
@@ -12,9 +13,14 @@
             Sheets$Builder]
            [com.google.api.services.sheets.v4.model
             BatchUpdateSpreadsheetRequest
+            CellData
+            CellFormat
+            ExtendedValue
+            NumberFormat
             GridCoordinate
             GridProperties
             Request
+            RowData
             SheetProperties
             UpdateCellsRequest
             UpdateSheetPropertiesRequest]
@@ -178,6 +184,63 @@
                      (.setRowCount (int row-count))
                      (.setColumnCount (int column-count))))))))))
 
+(defprotocol ToCellData
+  (datum->cell ^CellData [_]))
+
+(defn joda-date-cell
+  "Returns a CellData containing the given date, formatted using the given excel
+   date formatting string, e.g. \"yyyy-mm-dd\" or \"M/d/yyyy\""
+  [pattern dt]
+  (-> (CellData.)
+      (.setUserEnteredValue
+       (-> (ExtendedValue.)
+           ;; https://developers.google.com/sheets/api/guides/concepts#datetime_serial_numbers
+           (.setNumberValue
+            (double (time/in-days (time/interval (time/date-time 1899 12 30) dt))))))
+      (.setUserEnteredFormat
+       (-> (CellFormat.)
+           (.setNumberFormat
+            (-> (NumberFormat.)
+                (.setType "DATE")
+                (.setPattern pattern)))))))
+
+(defn safe-to-double?
+  [n]
+  (= (bigdec n) (bigdec (double n))))
+
+(extend-protocol ToCellData
+  Number
+  (datum->cell [n]
+    (when-not (safe-to-double? n)
+      (throw (ex-info "Number value exceeds double precision" {:n n})))
+    (-> (CellData.)
+        (.setUserEnteredValue
+         (-> (ExtendedValue.)
+             (.setNumberValue (double n))))))
+  String
+  (datum->cell [s]
+    (-> (CellData.)
+        (.setUserEnteredValue
+         (-> (ExtendedValue.)
+             (.setStringValue s)))))
+  clojure.lang.Keyword
+  (datum->cell [kw]
+    (datum->cell (str kw)))
+  CellData
+  (datum->cell [cd]
+    cd)
+  org.joda.time.DateTime
+  (datum->cell [dt]
+    (joda-date-cell "yyyy-mm-dd" dt))
+  nil
+  (datum->cell [_]
+    (CellData.)))
+
+(defn data->row
+  [row]
+  (-> (RowData.)
+      (.setValues (map datum->cell row))))
+
 (defn update-cells-request
   [sheet-id row-index column-index rows]
   (-> (Request.)
@@ -188,7 +251,7 @@
                 (.setSheetId (int sheet-id))
                 (.setRowIndex (int row-index))
                 (.setColumnIndex (int column-index))))
-           (.setRows rows)
+           (.setRows (map data->row rows))
            (.setFields "userEnteredValue,userEnteredFormat")))))
 
 (defn batch-update-request

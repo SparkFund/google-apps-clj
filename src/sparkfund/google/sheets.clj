@@ -56,7 +56,7 @@
 
 (defn build-service
   [config]
-  (let [{::keys [app]} config
+  (let [{::keys [^String app]} config
         request-initializer (build-request-initializer config)]
     (.build (doto (Sheets$Builder. credentials/http-transport
                                    credentials/json-factory
@@ -68,10 +68,11 @@
    ::shutdown-duration (Duration/ofSeconds 20)})
 
 (defn build-executor
-  "Builds an executor that execute google client requests concurrently.
+  "Builds an executor that execute google client requests concurrently,
+   with the maximum number of threads controlled by the ::concurrency
+   config value.
 
-   This returns a map with an ::input channel, a ::control channel,
-   and an ::output channel.
+   This returns a map with an ::input channel and a ::close! fn.
 
    The input channel accepts maps which must contain a google client
    request in the ::request key and an ::output channel. The executor
@@ -81,13 +82,10 @@
    executor adds ::status false and the ::exception to the map and
    writes it to the output channel.
 
-   The executor runs with the number of threads given by
-   the ::concurrency value in the config map. When the control channel
-   closes, this closes the input channel and gives any active
-   workers ::shutdown-duration in which to finish before
-   adding ::status false ::event ::shutdown to the request map and
-   writing to the output channels. The executor will be fully shutdown
-   when the top-level ::output channel closes."
+   When the close! fn is called, the executor closes the input channel
+   and gives any extant workers as long as the ::shutdown-duration in the
+   config to finish before writing failures to their output channels and
+   shutting down."
   [config]
   (let [config (merge default-executor-config config)
         {::keys [concurrency ^Duration shutdown-duration]} config
@@ -95,6 +93,10 @@
         input (async/chan)
         machine (async/go-loop [workers {}
                                 shutdown nil]
+                  ;; If we shutting down and all work is done, we don't
+                  ;; need to wait for the shutdown channel to timeout
+                  (when (and shutdown (not seq workers))
+                    (async/close! shutdown))
                   (let [chans (cond-> (into [] (keys workers))
                                 shutdown
                                 (conj shutdown)
@@ -103,47 +105,40 @@
                         [value chan] (async/alts! chans)]
                     (condp = chan
                       input
-                      (do
-                        (println "input" value)
-                        (let [{::keys [^AbstractGoogleClientRequest request output]} value
-                              worker (async/thread
-                                       (let [response (try
-                                                        (let [response (.execute request)]
-                                                          (assoc value
-                                                                 ::status true
-                                                                 ::response response))
-                                                        (catch Exception e
-                                                          (assoc value
-                                                                 ::status false
-                                                                 ::exception e
-                                                                 ::event :execute-exception)))]
-                                         (async/put! output response)))]
-                           (recur (assoc workers worker value) shutdown)))
+                      (let [{::keys [^AbstractGoogleClientRequest request output]} value
+                            worker (async/thread
+                                     (let [response (try
+                                                      (let [response (.execute request)]
+                                                        (assoc value
+                                                               ::status true
+                                                               ::response response))
+                                                      (catch Exception e
+                                                        (assoc value
+                                                               ::status false
+                                                               ::exception e
+                                                               ::event :execute-exception)))]
+                                       (async/put! output response)))]
+                        (recur (assoc workers worker value) shutdown))
 
                       control
                       (do
-                        (println "control")
                         (async/close! input)
                         (recur workers (async/timeout (.toMillis shutdown-duration))))
 
-                      ;; TODO this will always wait for shutdown ms, but we
-                      ;; should stop as soon there are no more workers
                       shutdown
-                      (do
-                        (println "shutdown")
-                        (doseq [value (vals workers)]
-                           (let [{::keys [output]} value]
-                             (async/>! output (assoc value
-                                                     ::status false
-                                                     ::event ::shutdown)))))
+                      (doseq [value (vals workers)]
+                        (let [{::keys [output]} value]
+                          (async/>! output (assoc value
+                                                  ::status false
+                                                  ::event ::shutdown))))
 
                       ;; must be a worker
-                      (do
-                        (println "worker done" value chan)
-                        (recur (dissoc workers chan) shutdown)))))]
-    {::control control
-     ::input input
-     ::output machine}))
+                      (recur (dissoc workers chan) shutdown))))]
+    {::input input
+     ::close! (fn []
+                (async/close! control)
+                (async/<!! machine)
+                :ok)}))
 
 (defn build-client
   [config]
@@ -269,30 +264,30 @@
 
 (defn write-sheet!
   [client config spreadsheet-id sheet-id rows]
-  (if-not (seq rows)
-    (async/go ::noop)
-    (let [{::keys [service]} client
-          config (merge default-write-sheet-config config)
-          {::keys [cells-per-request requests-per-batch]} config
-          num-cols (apply max (map count rows))
-          rows-per-request (long (/ cells-per-request num-cols))
-          ;; We first want to clear the cells to which we're about to write
-          ;; not sure why we write the first row specially but uh we do
-          init-requests [(clear-cells-request sheet-id (count rows) num-cols)
-                         (update-cells-request sheet-id 0 0 [(first rows)])]
-          init-batch-requests [(batch-update-request service spreadsheet-id init-requests)]
-          data-requests (into []
-                              (map-indexed (fn [i batch]
-                                             (let [row-index (inc (* i rows-per-request))]
-                                               (update-cells-request sheet-id row-index 0 batch))))
-                              (partition-all rows-per-request (rest rows)))
-          batch-requests (into []
-                               (map (fn [batch]
-                                      (batch-update-request service spreadsheet-id batch)))
-                               (partition-all requests-per-batch data-requests))]
-      (async/go
-        (let [responses (async/<! (execute-requests client init-batch-requests))]
-          (if (every? true? (map ::status responses))
-            (let [responses (async/<! (execute-requests client batch-requests))]
-              (every? true? (map ::status responses)))
-            false))))))
+  (let [num-cols (apply max (map count rows))]
+    (if-not (pos? num-cols)
+      (async/go ::noop)
+      (let [{::keys [service]} client
+            config (merge default-write-sheet-config config)
+            {::keys [cells-per-request requests-per-batch]} config
+            rows-per-request (long (/ cells-per-request num-cols))
+            ;; We first want to clear the cells to which we're about to write
+            ;; not sure why we write the first row specially but uh we do
+            init-requests [(clear-cells-request sheet-id (count rows) num-cols)
+                           (update-cells-request sheet-id 0 0 [(first rows)])]
+            init-batch-requests [(batch-update-request service spreadsheet-id init-requests)]
+            data-requests (into []
+                                (map-indexed (fn [i batch]
+                                               (let [row-index (inc (* i rows-per-request))]
+                                                 (update-cells-request sheet-id row-index 0 batch))))
+                                (partition-all rows-per-request (rest rows)))
+            batch-requests (into []
+                                 (map (fn [batch]
+                                        (batch-update-request service spreadsheet-id batch)))
+                                 (partition-all requests-per-batch data-requests))]
+        (async/go
+          (let [responses (async/<! (execute-requests client init-batch-requests))]
+            (if (every? true? (map ::status responses))
+              (let [responses (async/<! (execute-requests client batch-requests))]
+                (every? true? (map ::status responses)))
+              false)))))))

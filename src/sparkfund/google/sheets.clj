@@ -1,8 +1,19 @@
 (ns sparkfund.google.sheets
   (:require [clojure.core.async :as async]
             [google-apps-clj.credentials :as credentials])
-  (:import [com.google.api.client.googleapis.services AbstractGoogleClientRequest]
-           [com.google.api.services.sheets.v4 Sheets$Builder]
+  (:import [com.google.api.client.googleapis.services
+            AbstractGoogleClientRequest]
+           [com.google.api.services.sheets.v4
+            Sheets
+            Sheets$Builder]
+           [com.google.api.services.sheets.v4.model
+            BatchUpdateSpreadsheetRequest
+            GridCoordinate
+            GridProperties
+            Request
+            SheetProperties
+            UpdateCellsRequest
+            UpdateSheetPropertiesRequest]
            [java.time Duration]))
 
 ;; TODO exponential backoff for request failures could be built into the executor
@@ -100,17 +111,41 @@
             []
             requestss)))
 
-;; TODO
 (defn clear-cells-request
-  [])
+  [sheet-id row-count column-count]
+  (-> (Request.)
+      (.setUpdateSheetProperties
+       (-> (UpdateSheetPropertiesRequest.)
+           (.setFields "gridProperties")
+           (.setProperties
+            (-> (SheetProperties.)
+                (.setSheetId (int sheet-id))
+                (.setGridProperties
+                 (-> (GridProperties.)
+                     (.setRowCount (int row-count))
+                     (.setColumnCount (int column-count))))))))))
 
-;; TODO
 (defn update-cells-request
-  [])
+  [sheet-id row-index column-index rows]
+  (-> (Request.)
+      (.setUpdateCells
+       (-> (UpdateCellsRequest.)
+           (.setStart
+            (-> (GridCoordinate.)
+                (.setSheetId (int sheet-id))
+                (.setRowIndex (int row-index))
+                (.setColumnIndex (int column-index))))
+           (.setRows rows)
+           (.setFields "userEnteredValue,userEnteredFormat")))))
 
-;; TODO
 (defn batch-update-request
-  [])
+  [^Sheets service spreadsheet-id requests]
+  (-> service
+      (.spreadsheets)
+      (.batchUpdate
+       spreadsheet-id
+       (-> (BatchUpdateSpreadsheetRequest.)
+           (.setRequests requests)))))
 
 (def default-write-sheet-config
   {::cells-per-request 10000

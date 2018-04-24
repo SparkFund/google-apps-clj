@@ -72,6 +72,11 @@
      ::input input}))
 
 (defn execute-requestss
+  "Sends the given seq of seq of requests to the executor to execute. Each
+   seq of requests are sent to the executor, and their responses are
+   accumulated. If all responses succeeded, the next batch is processed.
+
+   This returns a channel which will contain the seq of seq of responses."
   [executor requestss]
   (async/go
     (reduce (fn [responsess requests]
@@ -79,7 +84,8 @@
                 (let [outputs (into []
                                     (map (fn [request]
                                            (let [output (async/chan)]
-                                             (when (async/>! executor [request output])))))
+                                             (when (async/put! executor [request output])
+                                               output))))
                                     requests)
                       responses (into []
                                       (map (fn [output]
@@ -134,9 +140,5 @@
           requestss [init-batch-requests
                      batch-requests]]
       (async/go
-        (let [responsess (async/<! (execute-requestss executor requestss))
-              successes (into []
-                              (map (fn [responses]
-                                     (every? first responses)))
-                              responsess)]
-          (every? true? successes))))))
+        (let [responsess (async/<! (execute-requestss executor requestss))]
+          (every? true? (mapcat (fn [responses] (map first responses)) responsess)))))))

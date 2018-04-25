@@ -107,6 +107,46 @@
   (-> (RowData.)
       (.setValues (map datum->cell row))))
 
+(defn cell-to-datum
+  [cell-data]
+  (let [ev (get cell-data "effectiveValue")
+        uev (get cell-data "userEnteredValue")
+        v (or ev uev)
+        string-val (get v "stringValue")
+        number-val (get v "numberValue")
+        number-format (get-in cell-data ["userEnteredFormat" "numberFormat" "type"])
+        date? (and (= "DATE" number-format) (some? number-val))
+        currency? (and (= "CURRENCY" number-format) (some? number-val))
+        empty-cell? (and (nil? ev) (nil? uev) (instance? CellData cell-data))]
+    (when (and (some? ev)
+               (some? uev))
+      (throw (ex-info "Ambiguous cell data, contains both string effectiveValue and userEnteredValue"
+                      {:cell-data cell-data})))
+    (when (and (some? string-val)
+               (some? number-val))
+      (throw (ex-info "Ambiguous cell data value, contains both stringValue and numberValue"
+                      {:cell-data cell-data})))
+    (cond
+      string-val
+      string-val
+
+      ;; TODO how might we control the return type if we don't want joda time?
+      date?
+      ;; https://developers.google.com/sheets/api/guides/concepts#datetime_serial_numbers
+      (time/plus (time/date-time 1899 12 30) (time/days (long number-val)))
+
+      currency?
+      (bigdec number-val)
+
+      number-val
+      number-val
+
+      empty-cell?
+      nil
+
+      :else
+      cell-data)))
+
 (defn update-cells-request
   [sheet-id row-index column-index rows]
   (-> (Request.)
@@ -129,6 +169,15 @@
        (-> (BatchUpdateSpreadsheetRequest.)
            (.setRequests requests)))))
 
+(defn get-cells-request
+  [^Sheets service spreadsheet-id sheet-ranges]
+  (let [fields "sheets(properties(title),data(rowData(values(effectiveValue,userEnteredFormat))))"]
+    (-> service
+        (.spreadsheets)
+        (.get spreadsheet-id)
+        (.setRanges sheet-ranges)
+        (.setFields fields))))
+
 (def default-write-sheet-config
   {::cells-per-request 10000
    ::requests-per-batch 10})
@@ -138,8 +187,7 @@
   (let [num-cols (apply max (map count rows))]
     (if-not (pos? num-cols)
       (async/go ::noop)
-      (let [{::keys [service]} client
-            config (merge default-write-sheet-config config)
+      (let [config (merge default-write-sheet-config config)
             {::keys [cells-per-request requests-per-batch]} config
             rows-per-request (long (/ cells-per-request num-cols))
             ;; We first want to clear the cells to which we're about to write
@@ -158,7 +206,26 @@
                                  (partition-all requests-per-batch data-requests))]
         (async/go
           (let [responses (async/<! (client/execute-requests client init-batch-requests))]
-            (if (every? true? (map ::success? responses))
+            (if (every? true? (map ::client/success? responses))
               (let [responses (async/<! (client/execute-requests client batch-requests))]
-                (every? true? (map ::success? responses)))
+                (every? true? (map ::client/success? responses)))
               false)))))))
+
+(defn read-sheet!
+  [client service spreadsheet-id sheet-title]
+  (let [request (get-cells-request service spreadsheet-id [sheet-title])]
+    (async/go
+      (let [[response] (async/<! (client/execute-requests client [request]))
+            {::client/keys [response success?]} response]
+        (when success?
+          (into []
+                (comp (map (fn [row-data]
+                             (get row-data "values")))
+                      (map (fn [row]
+                             (into [] (map cell-to-datum) row))))
+                (-> response
+                    (get "sheets")
+                    first
+                    (get "data")
+                    first
+                    (get "rowData"))))))))

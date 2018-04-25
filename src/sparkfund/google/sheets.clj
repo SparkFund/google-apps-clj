@@ -77,9 +77,9 @@
    The input channel accepts maps which must contain a google client
    request in the ::request key and an ::output channel. The executor
    executes the request. If the request was processed successfully, the
-   executor adds ::status true and the ::response to the map and writes
+   executor adds ::success? true and the ::response to the map and writes
    it to the output channel. If the execution throws an exception, the
-   executor adds ::status false and the ::exception to the map and
+   executor adds ::success? false and the ::exception to the map and
    writes it to the output channel.
 
    When the close! fn is called, the executor closes the input channel
@@ -88,67 +88,72 @@
    shutting down."
   [config]
   (let [config (merge default-executor-config config)
-        {::keys [concurrency ^Duration shutdown-duration]} config
+        {::keys [concurrency input ^Duration shutdown-duration]} config
         control (async/chan)
-        input (async/chan)
         machine (async/go-loop [workers {}
                                 shutdown nil]
                   ;; If we shutting down and all work is done, we don't
                   ;; need to wait for the shutdown channel to timeout
-                  (when (and shutdown (not seq workers))
+                  (when (and shutdown (not (seq workers)))
                     (async/close! shutdown))
                   (let [chans (cond-> (into [] (keys workers))
                                 shutdown
                                 (conj shutdown)
-                                (and (not shutdown) (< (count workers) concurrency))
+                                (not shutdown)
+                                (conj control)
+                                (< (count workers) concurrency)
                                 (conj input))
                         [value chan] (async/alts! chans)]
                     (condp = chan
                       input
-                      (let [{::keys [^AbstractGoogleClientRequest request output]} value
-                            worker (async/thread
-                                     (let [response (try
-                                                      (let [response (.execute request)]
-                                                        (assoc value
-                                                               ::status true
-                                                               ::response response))
-                                                      (catch Exception e
-                                                        (assoc value
-                                                               ::status false
-                                                               ::exception e
-                                                               ::event :execute-exception)))]
-                                       (async/put! output response)))]
-                        (recur (assoc workers worker value) shutdown))
+                      (when (some? value)
+                        (let [{::keys [^AbstractGoogleClientRequest request output]} value
+                              worker (async/thread
+                                       (let [response (try
+                                                        (let [response (.execute request)]
+                                                          (assoc value
+                                                                 ::success? true
+                                                                 ::response response))
+                                                        (catch Exception e
+                                                          (assoc value
+                                                                 ::success? false
+                                                                 ::exception e
+                                                                 ::event :execute-exception)))]
+                                         (async/put! output response)))]
+                          (recur (assoc workers worker value) shutdown)))
 
                       control
-                      (do
-                        (async/close! input)
-                        (recur workers (async/timeout (.toMillis shutdown-duration))))
+                      (recur workers (async/timeout (.toMillis shutdown-duration)))
 
                       shutdown
                       (doseq [value (vals workers)]
                         (let [{::keys [output]} value]
                           (async/>! output (assoc value
-                                                  ::status false
+                                                  ::success? false
                                                   ::event ::shutdown))))
 
                       ;; must be a worker
                       (recur (dissoc workers chan) shutdown))))]
-    {::input input
-     ::close! (fn []
+    {::close! (fn []
                 (async/close! control)
-                (async/<!! machine)
-                :ok)}))
+                (async/<!! machine))}))
 
 (defn build-client
   [config]
-  {::service (build-service config)
-   ::executor (build-executor config)})
+  (let [input (async/chan)]
+    {::service (build-service config)
+     ::input input
+     ::executor (build-executor (assoc config ::input input))}))
+
+(defn stop-client
+  [client]
+  (let [{::keys [input executor]} client]
+    (async/close! input)
+    ((get executor ::close!))))
 
 (defn execute-requests
   [client requests]
-  (let [{::keys [executor]} client
-        {::keys [input]} executor]
+  (let [{::keys [input]} client]
     (async/go
       (let [outputs (into []
                           (map (fn [request]
@@ -156,7 +161,7 @@
                                        value {::request request
                                               ::output output}]
                                    (when-not (async/put! input value)
-                                     (async/put! output {::status false
+                                     (async/put! output {::success? false
                                                          ::event ::input-closed}))
                                    output)))
                           requests)
@@ -287,7 +292,7 @@
                                  (partition-all requests-per-batch data-requests))]
         (async/go
           (let [responses (async/<! (execute-requests client init-batch-requests))]
-            (if (every? true? (map ::status responses))
+            (if (every? true? (map ::success? responses))
               (let [responses (async/<! (execute-requests client batch-requests))]
-                (every? true? (map ::status responses)))
+                (every? true? (map ::success? responses)))
               false)))))))

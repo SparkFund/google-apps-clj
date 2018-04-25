@@ -32,8 +32,8 @@
         {::keys [credentials scopes read-timeout connect-timeout]} config
         request-initializer
         (with-open [input (io/input-stream credentials)]
-          (doto (GoogleCredential/fromStream input)
-            (.createScoped scopes)))]
+          (-> (GoogleCredential/fromStream input)
+              (.createScoped scopes)))]
     (reify HttpRequestInitializer
       (^void initialize [_ ^HttpRequest request]
        (.initialize ^HttpRequestInitializer request-initializer request)

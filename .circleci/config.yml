@@ -1,0 +1,26 @@
+version: 2
+jobs:
+  build:
+    docker:
+      - image: circleci/clojure:lein-2.7.1
+    steps:
+      - checkout
+
+      #Install & cache dependencies
+      - restore_cache:
+          key: sparkfund--{{ .Environment.CIRCLE_PROJECT_REPONAME }}--maven-deps--{{ checksum "project.clj" }}
+          key: sparkfund--{{ .Environment.CIRCLE_PROJECT_REPONAME }}--maven-deps
+      - run:
+          name: List Machine Info
+          command: java -version; echo; lein --version
+      - run:
+          name: Install Dependencies
+          command: lein deps
+      - save_cache:
+          key: sparkfund--{{ .Environment.CIRCLE_PROJECT_REPONAME }}--maven-deps--{{ checksum "project.clj" }}
+          paths:
+            - "~/.m2"
+      
+      - run:
+          name: Run Tests
+          command: lein typed check

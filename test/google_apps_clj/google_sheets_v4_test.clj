@@ -10,6 +10,7 @@
 (deftest test-cell-conversion
   (is (= "foo" (cell->clj "foo")))
   (is (= 2.0 (cell->clj 2.0)))
+  (is (= true (cell->clj true)))
   (is (= (time/date-time 1950 6 15)
          (cell->clj (time/date-time 1950 6 15))))
   (is (= "foo" (cell->clj (coerce-to-cell "foo"))))

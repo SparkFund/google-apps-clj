@@ -73,7 +73,7 @@ To obtain a service credential:
 2. Navigate to the [Developer's Console](https://console.developers.google.com)
 3. Create a project and name it appropriately
 4. Navigate to the [API Manager](https://console.developers.google.com/apis/library), and enable the APIs you need an disable the default-provided ones you don't need
-5. Navigate to the [_Permissions > Service Accounts_ page](https://console.developers.google.com/permissions/serviceaccounts)
+5. Navigate to the [ IAM > Service Accounts_ page](https://console.cloud.google.com/iam-admin/serviceaccounts)
 6. Create a new service account, selecting the option to obtain a new private key as JSON.
 7. You should be given a JSON file containing the credential.  You have a few options now:
   * Store it anywhere, and set an environment variable (`GOOGLE_APPLICATION_CREDENTIALS`) to point to it
